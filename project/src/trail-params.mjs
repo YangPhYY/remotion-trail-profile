@@ -35,6 +35,9 @@ export const PARAM_GROUPS = [
     group: "轨迹",
     hint: "路线本体。白色=已走，半透明=未走；「自定义途经点」在下方单独编辑",
     items: [
+      // 总开关放组内第一项并给人话标签：它是「只出海拔图」时最常按的那个键。
+      // 关掉后线 / 头部点 / 起终点 / 标注 / 途经点整层消失（底图另由「显示底图」控制）。
+      { key: "显示轨迹", type: "bool", label: "显示轨迹" },
       { key: "已走颜色", type: "color" },
       { key: "轨迹颜色", type: "color" },
       { key: "线宽", type: "range", min: 1, max: 30, step: 0.5, unit: "px" },

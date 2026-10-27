@@ -219,6 +219,11 @@
       </label>
       <label style="font-size:12px;color:#e8f1f8;display:flex;align-items:center;gap:5px;white-space:nowrap;
                     padding:3px 9px;border:1px solid #2a3d4e;border-radius:6px;background:#121d27"
+             title="显示 / 隐藏地图上的轨迹动画（= 参数「轨迹 · 显示轨迹」）。关掉后轨迹线、头部点、起终点、标注与途经点一起隐藏；海拔剖面、标题、读数不受影响。">
+        <input type="checkbox" id="chk-track" checked style="accent-color:#35d6c8"> 轨迹
+      </label>
+      <label style="font-size:12px;color:#e8f1f8;display:flex;align-items:center;gap:5px;white-space:nowrap;
+                    padding:3px 9px;border:1px solid #2a3d4e;border-radius:6px;background:#121d27"
              title="显示 / 隐藏下方海拔剖面（= 参数「海拔剖面 · 显示海拔图」）。关掉后地图区自动撑满全屏高度。">
         <input type="checkbox" id="chk-profile" checked style="accent-color:#35d6c8"> 海拔图
       </label>
@@ -776,8 +781,8 @@ for (const g of PARAM_GROUPS) {
   panel.appendChild(box);
 }
 
-// 顶部快捷开关「海拔图」—— 与参数表里的「海拔剖面 · 显示海拔图」是**同一个键**的第二个入口，
-// 不复制状态：两边任一改动都写 PROPS["海拔剖面"]["显示"]，再由 syncControls() 双向回填。
+// 顶部快捷开关「海拔图」/「轨迹」—— 与参数表里的同名项是**同一个键**的第二个入口，
+// 不复制状态：两边任一改动都写 PROPS[...]，再由 syncControls() 双向回填。
 {
   const cb = $("chk-profile");
   cb.addEventListener("change", () => {
@@ -785,6 +790,14 @@ for (const g of PARAM_GROUPS) {
     onChanged();
   });
   controls.push({ group: "海拔剖面", key: "显示", primary: cb, set: (v) => { cb.checked = !!v; } });
+}
+{
+  const cb = $("chk-track");
+  cb.addEventListener("change", () => {
+    PROPS["轨迹"]["显示轨迹"] = cb.checked;
+    onChanged();
+  });
+  controls.push({ group: "轨迹", key: "显示轨迹", primary: cb, set: (v) => { cb.checked = !!v; } });
 }
 
 /** 把 PROPS 的当前值刷回控件；正被编辑的那个控件跳过（否则打字会被打断） */
@@ -861,7 +874,18 @@ let lastScene = null; // 最近一帧的场景对象（画布交互要用相机 
 let trackKey = "";
 let trackDyn = { glow: null, done: null };
 function syncTrack(m) {
+  // 「轨迹 · 显示轨迹」关掉 → 整层清空并让 key 失效，重新打开时必然重建 DOM。
+  // 不能只把 opacity 设 0：path 的 d 有 50 KB，留着只是白占内存与重绘。
+  if (!m.showTrack) {
+    if (trackKey !== "") {
+      mapTrack.innerHTML = "";
+      trackKey = "";
+      trackDyn = { glow: null, done: null };
+    }
+    return;
+  }
   const key = [
+    m.showTrack,
     m.gx, m.gy, m.k,
     m.ghost.color, m.ghost.widthUser, m.ghost.opacity,
     m.glow.on, m.glow.color, m.glow.widthUser, m.glow.std,
@@ -977,6 +1001,7 @@ function render() {
   mapRest.innerHTML = parts.join("");
   svgMap.style.opacity = s.fade;
   lastScene = s; // 画布交互（拖标记 / 点空白加点）需要用到相机与当前点位
+  syncHit();
 
   // 瓦片池：只增删差异项，复用的 <image> 不重新挂载（否则每帧闪烁）
   const want = new Set(m.tiles.map((t) => t.key));
@@ -1097,8 +1122,15 @@ function render() {
 // 拖动时换算的正是「屏幕 → 墨卡托 → 轨迹上最近点 → 里程」这条链。
 // ===========================================================================
 const hit = $("hit");
+let editEnabled = true;
+/** 交互层开关：既要「点位编辑」勾着，也要轨迹可见 —— 轨迹都隐藏了还拖/加点位，纯属误触 */
+function syncHit() {
+  const trackOn = lastScene ? lastScene.map.showTrack !== false : true;
+  hit.classList.toggle("off", !editEnabled || !trackOn);
+}
 $("chk-edit").addEventListener("change", (e) => {
-  hit.classList.toggle("off", !e.target.checked);
+  editEnabled = e.target.checked;
+  syncHit();
 });
 
 /** 客户端坐标 → 舞台内部坐标。stage 被 CSS 缩放，必须除掉缩放系数 */

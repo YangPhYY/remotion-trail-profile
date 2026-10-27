@@ -49,6 +49,11 @@ export const trailProfileSchema = z.object({
 
   // ② 轨迹绘制
   "轨迹": z.object({
+    "显示轨迹": z
+      .boolean()
+      .describe(
+        "轨迹总开关。关掉后轨迹线、头部光点、起终点、标注、自定义途经点一起隐藏（底图不受影响），可只留海拔剖面"
+      ),
     "轨迹颜色": zColor().describe("未走路段（幽灵路径）的颜色"),
     "已走颜色": zColor().describe("已走路段的颜色"),
     "线宽": z.number().step(0.5).min(1).max(30),

@@ -137,43 +137,47 @@ export const TrailProfile: React.FC<TrailProfileProps> = (props) => {
             </>
           ) : null}
 
-          {/* 轨迹：整组吃一个 transform，相机移动不再逐帧重算 3100 个点 */}
-          <g transform={`translate(${m.gx.toFixed(3)} ${m.gy.toFixed(3)}) scale(${m.k})`}>
-            <path
-              d={m.trackPath}
-              fill="none"
-              stroke={m.ghost.color}
-              strokeOpacity={m.ghost.opacity}
-              strokeWidth={m.ghost.widthUser}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            {m.glow.on ? (
+          {/* 轨迹：整组吃一个 transform，相机移动不再逐帧重算 3100 个点。
+              ★ 「轨迹 · 显示轨迹」= 总开关：关掉后这一组连同头部点/起终点/标注
+                全部不渲染（后三者在场景模型里已按同一开关置空）。 */}
+          {m.showTrack ? (
+            <g transform={`translate(${m.gx.toFixed(3)} ${m.gy.toFixed(3)}) scale(${m.k})`}>
               <path
                 d={m.trackPath}
                 fill="none"
-                stroke={m.glow.color}
-                strokeOpacity={0.55}
-                strokeWidth={m.glow.widthUser}
+                stroke={m.ghost.color}
+                strokeOpacity={m.ghost.opacity}
+                strokeWidth={m.ghost.widthUser}
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                filter="url(#tp-glow)"
-                pathLength={1}
-                strokeDasharray={m.glow.dash}
               />
-            ) : null}
-            {/* 已走部分：pathLength=1 + dasharray 局部绘制，比例按墨卡托弧长归一 */}
-            <path
-              d={m.trackPath}
-              fill="none"
-              stroke={m.done.color}
-              strokeWidth={m.done.widthUser}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              pathLength={1}
-              strokeDasharray={m.done.dash}
-            />
-          </g>
+              {m.glow.on ? (
+                <path
+                  d={m.trackPath}
+                  fill="none"
+                  stroke={m.glow.color}
+                  strokeOpacity={0.55}
+                  strokeWidth={m.glow.widthUser}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  filter="url(#tp-glow)"
+                  pathLength={1}
+                  strokeDasharray={m.glow.dash}
+                />
+              ) : null}
+              {/* 已走部分：pathLength=1 + dasharray 局部绘制，比例按墨卡托弧长归一 */}
+              <path
+                d={m.trackPath}
+                fill="none"
+                stroke={m.done.color}
+                strokeWidth={m.done.widthUser}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                pathLength={1}
+                strokeDasharray={m.done.dash}
+              />
+            </g>
+          ) : null}
 
           {/* 起点 / 终点 / 头部光点（屏幕空间，不随相机缩放） */}
           {m.start ? (

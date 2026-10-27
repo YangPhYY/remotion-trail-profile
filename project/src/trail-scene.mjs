@@ -372,6 +372,12 @@ export function buildTrailScene(geo, D, props, frame, cfg) {
   const headR = clamp(num(T["头部点半径"], D["轨迹"]["头部点半径"]), 0, 40);
   const markMode = T["标注显示"] === "全部" ? "全部" : T["标注显示"] === "精选" ? "精选" : "关闭";
   const markFont = clamp(num(T["标注字号"], D["轨迹"]["标注字号"]), 8, 48);
+  // ★ 轨迹总开关（与「海拔剖面 · 显示」同一层级的总开关）
+  //   关掉后：轨迹线（幽灵/已走/光晕）+ 头部光点 + 起终点 + 标注 + 自定义途经点
+  //   一起隐藏 —— 因为这几样是同一层「地图叠加」，只关线条会留下一堆悬空标签。
+  //   底图不受它管：那是「地图 · 显示底图」，可能是想留个卫星影像垫在下面。
+  //   剖面、游标、标题、读数也都不受影响 —— 于是「只出海拔图」= 关轨迹 + 关底图。
+  const showTrack = T["显示轨迹"] !== false;
   // 自定义途经点（用户自己加的）：与 KML 预置标注共用「里程」这套坐标，
   // 但颜色/字号独立，且可以只在走到之后出现。
   const showWaypoints = T["途经点显示"] !== false;
@@ -506,7 +512,7 @@ export function buildTrailScene(geo, D, props, frame, cfg) {
   const inView = (sx, sy) => sx > -160 && sx < width + 160 && sy > -80 && sy < mapH + 80;
   const marks = [];
 
-  if (markMode !== "关闭") {
+  if (showTrack && markMode !== "关闭") {
     for (const m of geo.marks) {
       if (markMode === "精选" && !m.highlight) continue;
       const s = cam.toScreen(m.x, m.y);
@@ -534,7 +540,7 @@ export function buildTrailScene(geo, D, props, frame, cfg) {
     }
   }
 
-  if (showWaypoints) {
+  if (showTrack && showWaypoints) {
     for (const w of waypointsOf(T["自定义途经点"], geo)) {
       const s = cam.toScreen(w.x, w.y);
       const pop = wpWalkToShow ? clamp01((distM - w.distM) / (geo.totalM * 0.006)) : 1;
@@ -678,6 +684,9 @@ export function buildTrailScene(geo, D, props, frame, cfg) {
     eleLo,
     eleHi,
     map: {
+      // 轨迹总开关：渲染方据此决定要不要画 trackPath 那两组 path。
+      // 头部点 / 起终点 / 标注已在上面按 showTrack 置空，所以两处判断一致。
+      showTrack,
       showBase,
       opacity: tileOpacity,
       filter: `grayscale(${tileGray}) brightness(${(1.55 - tileDarken).toFixed(3)}) contrast(1.12) blur(${tileBlur}px)`,
@@ -707,9 +716,9 @@ export function buildTrailScene(geo, D, props, frame, cfg) {
         fontSize: markFont,
         color: markColor,
       },
-      start: T["显示起终点"] !== false ? { x: startScr.sx, y: startScr.sy } : null,
-      end: T["显示起终点"] !== false && finished ? { x: endScr.sx, y: endScr.sy } : null,
-      head: headR > 0
+      start: showTrack && T["显示起终点"] !== false ? { x: startScr.sx, y: startScr.sy } : null,
+      end: showTrack && T["显示起终点"] !== false && finished ? { x: endScr.sx, y: endScr.sy } : null,
+      head: showTrack && headR > 0
         ? {
             x: headScr.sx,
             y: headScr.sy,
