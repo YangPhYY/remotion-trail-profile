@@ -1,0 +1,28 @@
+# ---- 密钥：绝不入库 ----
+.env
+.env.local
+.env.*.local
+*.key
+
+# ---- Remotion / Node ----
+node_modules/
+.bundle/
+out/
+
+# ---- 生成的 HTML 查看器（会把 JS API key 明文写进页面） ----
+path-viewer*.html
+!path-viewer*.template.html
+
+# ---- 地图素材：自行在本地获取，不要分发 ----
+public/
+.public-*/
+*.mbtiles
+
+# ---- 我的真实轨迹（只保留 examples/ 下的虚构示例） ----
+examples/*.kml
+!examples/demo-loop.kml
+
+# ---- 系统垃圾 ----
+.DS_Store
+Thumbs.db
+*.log

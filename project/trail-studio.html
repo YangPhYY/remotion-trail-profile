@@ -1,0 +1,1390 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>海拔剖面动画调参台 · TrailProfile</title>
+<style>
+  :root {
+    --panel: #101823; --panel2: #16212e; --line: #24374b;
+    --text: #d8e4ef; --muted: #7f95a8; --accent: #35d6c8; --warn: #ffb454;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: #060b12; color: var(--text);
+    font: 13px/1.5 "Segoe UI", "Microsoft YaHei", sans-serif;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  header {
+    padding: 9px 16px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 10px; background: var(--panel); flex: none;
+  }
+  header h1 { font-size: 14px; font-weight: 600; white-space: nowrap; }
+  header .hint { font-size: 12px; color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  header button, #bar button {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 12px; white-space: nowrap;
+  }
+  header button:hover, #bar button:hover { border-color: var(--accent); color: var(--accent); }
+  header button.primary { border-color: var(--accent); color: var(--accent); }
+  header button.primary:hover { background: var(--accent); color: #06131a; }
+  main { flex: 1; display: flex; min-height: 0; }
+
+  #panel {
+    width: 352px; flex: none; overflow-y: auto; background: var(--panel);
+    border-right: 1px solid var(--line); padding-bottom: 40px;
+  }
+  #panel::-webkit-scrollbar { width: 9px; }
+  #panel::-webkit-scrollbar-thumb { background: #24374b; border-radius: 5px; }
+  .grp { border-bottom: 1px solid #1a2735; }
+  .grp > summary {
+    cursor: pointer; padding: 8px 14px; font-size: 12.5px; font-weight: 600;
+    color: var(--accent); list-style: none; user-select: none;
+  }
+  .grp > summary::-webkit-details-marker { display: none; }
+  .grp > summary::before { content: "▸ "; color: var(--muted); }
+  .grp[open] > summary::before { content: "▾ "; }
+  .grp .ghint { padding: 0 14px 8px; font-size: 11px; color: var(--muted); line-height: 1.45; }
+  .row { display: flex; align-items: center; gap: 7px; padding: 3px 14px; }
+  .row > label { flex: none; width: 106px; font-size: 12px; color: #b7c8d8; }
+  .row input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); height: 18px; }
+  .row input[type=number] {
+    flex: none; width: 66px; background: #0b131d; color: var(--text);
+    border: 1px solid var(--line); border-radius: 4px; padding: 2px 5px;
+    font-size: 12px; font-family: Consolas, monospace;
+  }
+  .row input[type=text] {
+    flex: 1; min-width: 0; background: #0b131d; color: var(--text);
+    border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; font-size: 12px;
+  }
+  .row input[type=color] {
+    flex: none; width: 44px; height: 22px; background: #0b131d;
+    border: 1px solid var(--line); border-radius: 4px; padding: 1px; cursor: pointer;
+  }
+  .row select {
+    flex: 1; background: #0b131d; color: var(--text); border: 1px solid var(--line);
+    border-radius: 4px; padding: 3px 6px; font-size: 12px;
+  }
+  .row .unit { flex: none; width: 20px; font-size: 11px; color: var(--muted); }
+  .row input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+
+  /* ---- 自定义途经点编辑器 ---- */
+  .wp { padding: 2px 14px 10px; }
+  .wp-hd { display: flex; align-items: baseline; justify-content: space-between; font-size: 11px; color: var(--muted); margin-bottom: 5px; }
+  .wp-hd b { color: var(--accent); font-weight: 600; }
+  .wp-tip { font-size: 10.5px; color: var(--muted); line-height: 1.5; margin-bottom: 7px; }
+  .wp-tip b { color: var(--accent); font-weight: 600; }
+  .wp-item {
+    border: 1px solid #1c2b3b; border-radius: 6px; padding: 5px 6px 6px;
+    margin-bottom: 6px; background: #0d1621;
+  }
+  .wp-item.sel { border-color: var(--accent); background: #0f1d29; }
+  .wp-line { display: flex; align-items: center; gap: 5px; }
+  .wp-line input[type=text] { flex: 1; min-width: 0; background: #0b131d; color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 3px 5px; font-size: 12px; }
+  .wp-line input[type=number] { flex: none; width: 58px; background: #0b131d; color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 3px 5px; font-size: 11.5px; font-family: Consolas, monospace; }
+  .wp-line input[type=number].wp-ll { width: 66px; font-size: 10.5px; }
+  .wp-line input[type=color] { flex: none; width: 24px; height: 22px; background: #0b131d; border: 1px solid var(--line); border-radius: 4px; padding: 1px; cursor: pointer; }
+  .wp-line .wp-unit { flex: none; font-size: 10px; color: var(--muted); width: 15px; }
+  .wp-line .wp-shape {
+    flex: none; width: 20px; text-align: center; font-size: 13px; line-height: 20px;
+    color: var(--warn); border: 1px solid #43331a; background: #1d1608;
+    border-radius: 3px; overflow: hidden;
+  }
+  .wp-line button { flex: none; width: 22px; height: 22px; padding: 0; line-height: 1; font-size: 12px; }
+  .wp-detail { border-top: 1px dashed #22344a; margin-top: 6px; padding-top: 5px; }
+  .wp-drow { display: flex; align-items: center; gap: 6px; padding: 1.5px 0; }
+  .wp-dlb { flex: none; width: 58px; font-size: 11px; color: #8ea3b6; }
+  .wp-drow select { flex: 1; background: #0b131d; color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; font-size: 11.5px; }
+  .wp-drow select.inherited { opacity: 0.5; }
+  .wp-drow input[type=color] { flex: none; width: 26px; height: 20px; background: #0b131d; border: 1px solid var(--line); border-radius: 4px; padding: 1px; cursor: pointer; }
+  .wp-drow input[type=color].inherited { opacity: 0.5; }
+  .wp-num { flex: 1; display: flex; align-items: center; gap: 5px; min-width: 0; }
+  .wp-num input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); height: 16px; }
+  .wp-num input[type=number] { flex: none; width: 50px; background: #0b131d; color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; font-size: 11px; font-family: Consolas, monospace; }
+  .wp-acts { display: flex; gap: 5px; margin-top: 6px; }
+  .wp-acts button { flex: 1; font-size: 11px; padding: 3px 4px; }
+  .wp-add { display: flex; gap: 6px; margin-top: 7px; }
+  .wp-add button { flex: 1; }
+  .wp-empty { font-size: 11px; color: var(--muted); padding: 2px 0 6px; line-height: 1.5; }
+  .wp-bad { font-size: 11px; color: #ff8f8f; line-height: 1.5; }
+  .wp-bad textarea { width: 100%; height: 62px; margin-top: 5px; background: #0b131d; color: var(--text); border: 1px solid #6b2b2b; border-radius: 4px; padding: 4px 6px; font-size: 11px; font-family: Consolas, monospace; }
+  /* 画布交互层：拖动标记改位置 / 点空白处加点 */
+  #hit { position: absolute; inset: 0; z-index: 6; cursor: crosshair; touch-action: none; }
+  #hit.near { cursor: grab; }
+  #hit.dragging { cursor: grabbing; }
+  #hit.off { pointer-events: none; }
+
+  #stagewrap { flex: 1; min-width: 0; display: flex; flex-direction: column; background: #0a0f16; }
+  #stageouter {
+    flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  #stage {
+    position: relative; width: 1920px; height: 1080px; flex: none;
+    transform-origin: center center; background: #0a1017; box-shadow: 0 0 0 1px #24374b;
+  }
+  /* 透明背景：用棋盘格表示 alpha=0（否则预览永远是写死的深色底，
+     既看不出「背景色」调节效果，也没法确认「透明背景」是否生效） */
+  #stage.transparent-bg {
+    background-color: #1a1f27;
+    background-image:
+      linear-gradient(45deg, #2b3240 25%, transparent 25%, transparent 75%, #2b3240 75%),
+      linear-gradient(45deg, #2b3240 25%, transparent 25%, transparent 75%, #2b3240 75%);
+    background-size: 28px 28px;
+    background-position: 0 0, 14px 14px;
+  }
+  #stage svg { position: absolute; left: 0; top: 0; display: block; }
+  #stage .ov { position: absolute; font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; }
+
+  #bar {
+    flex: none; display: flex; align-items: center; gap: 12px;
+    padding: 8px 16px; border-top: 1px solid var(--line); background: var(--panel);
+  }
+  #bar button { min-width: 62px; }
+  #seek { flex: 1; accent-color: var(--accent); }
+  #bar .stat { font-family: Consolas, monospace; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  #bar .stat b { color: var(--text); font-weight: 600; }
+
+  .toast {
+    position: fixed; right: 18px; bottom: 66px; z-index: 50;
+    background: #16212e; border: 1px solid var(--accent); color: var(--accent);
+    padding: 8px 16px; border-radius: 8px; font-size: 12.5px; opacity: 0;
+    transform: translateY(8px); transition: all .22s; pointer-events: none; max-width: 480px;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.err { border-color: #ff6b6b; color: #ff6b6b; }
+  #boot {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: #060b12; color: var(--muted); z-index: 100; font-size: 14px; text-align: center;
+    line-height: 2; padding: 40px;
+  }
+  #boot code { color: var(--warn); font-family: Consolas, monospace; }
+</style>
+</head>
+<body>
+
+<div id="boot">正在载入轨迹数据…</div>
+
+<header>
+  <h1>海拔剖面动画调参台</h1>
+  <span class="hint" id="hint"></span>
+  <button id="btn-copy">复制 Props JSON</button>
+  <button id="btn-reload">重新载入</button>
+  <button id="btn-reset">恢复默认</button>
+  <button id="btn-save" class="primary">保存到文件</button>
+</header>
+
+<main>
+  <aside id="panel"></aside>
+  <section id="stagewrap">
+    <div id="stageouter">
+      <div id="stage">
+        <!-- 结构固定：瓦片层与 defs 常驻，其余每帧重建 innerHTML。
+             若把瓦片也塞进每帧重建的字符串里，浏览器每帧都要重新挂载 100+ 张
+             <image>，预览会闪、会卡。
+             ★ map-track 单独一层：轨迹 path 的 d 是 3100 个点（≈50 KB 字符串），
+               而它的变换 (gx,gy,k) 在平面全景下**恒定**，每帧只有 dasharray 在变 ——
+               单独成层后每帧只改两个属性，预览才跑得动 60fps。 -->
+        <svg id="svg-map" width="1920" height="1080" viewBox="0 0 1920 1080">
+          <defs id="map-defs"></defs>
+          <g id="map-clip">
+            <g id="map-tiles"></g>
+            <g id="map-dark"></g>
+            <g id="map-track"></g>
+            <g id="map-rest"></g>
+          </g>
+        </svg>
+        <svg id="svg-prof" width="1920" height="1080" viewBox="0 0 1920 1080">
+          <defs id="prof-defs"></defs>
+          <g id="prof-rest"></g>
+        </svg>
+        <div class="ov" id="ov-title"></div>
+        <div class="ov" id="ov-hud"></div>
+        <!-- 画布交互层（最上层，透明）：拖动标记改位置、点空白处加点。
+             放在最后是因为它要盖在标题/读数之上才能接住指针事件。 -->
+        <div id="hit"></div>
+      </div>
+    </div>
+    <div id="bar">
+      <button id="btn-play">▶ 播放</button>
+      <button id="btn-home">⏮ 起点</button>
+      <input id="seek" type="range" min="0" max="100" step="1" value="0">
+      <span class="stat" id="stat"></span>
+      <label style="font-size:12px;color:#7f95a8;display:flex;align-items:center;gap:5px;white-space:nowrap">
+        <input type="checkbox" id="chk-loop" checked style="accent-color:#35d6c8"> 循环
+      </label>
+      <label style="font-size:12px;color:#7f95a8;display:flex;align-items:center;gap:5px;white-space:nowrap"
+             title="开启后可直接在预览里拖动途经点、点空白处新增。关掉可避免误触。">
+        <input type="checkbox" id="chk-edit" checked style="accent-color:#35d6c8"> 点位编辑
+      </label>
+      <label style="font-size:12px;color:#e8f1f8;display:flex;align-items:center;gap:5px;white-space:nowrap;
+                    padding:3px 9px;border:1px solid #2a3d4e;border-radius:6px;background:#121d27"
+             title="显示 / 隐藏下方海拔剖面（= 参数「海拔剖面 · 显示海拔图」）。关掉后地图区自动撑满全屏高度。">
+        <input type="checkbox" id="chk-profile" checked style="accent-color:#35d6c8"> 海拔图
+      </label>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script type="module">
+import { makeGeo, sampleAt, invMercY, mercX, mercY, EASING_FN } from "./src/trail-geo.mjs";
+import {
+  buildTrailScene,
+  trailDurationInFrames,
+  nearestDistOnTrack,
+  WP_SHAPES,
+  WP_LABEL_POS,
+} from "./src/trail-scene.mjs";
+import { PARAM_GROUPS, clampPropsToSpec } from "./src/trail-params.mjs";
+
+// ---------------------------------------------------------------------------
+// 预览原理
+//   调参台**不重新实现绘制**：它调用与 Remotion 组件同一个 buildTrailScene()，
+//   再把返回的场景对象塞进 DOM 属性。所以「这里看到什么，出片就是什么」。
+//   唯一差别是外面套了个 CSS 缩放（1920×1080 → 适配窗口）。
+// ---------------------------------------------------------------------------
+if (location.protocol !== "http:") {
+  document.getElementById("boot").innerHTML =
+    "⚠ 请通过本地服务打开，不要双击文件（ES 模块在 file:// 下会被浏览器拦截）：<br>" +
+    "<code>npm run studio-trail</code><br>然后访问 <code>http://localhost:5232/trail-studio.html</code>";
+  throw new Error("need http");
+}
+
+const W = 1920, H = 1080, FPS = 30;
+const $ = (id) => document.getElementById(id);
+
+let GEO, DEFAULTS, PROPS, SAVED, DUR = 1, frame = 0;
+
+try {
+  const [d, def] = await Promise.all([
+    fetch("./src/trail-profile-data.json").then((r) => r.json()),
+    fetch("./src/trail-profile-defaults.json").then((r) => r.json()),
+  ]);
+  GEO = makeGeo(d);
+  DEFAULTS = def;
+  SAVED = structuredClone(def);
+  PROPS = structuredClone(def);
+} catch (e) {
+  $("boot").innerHTML =
+    "✗ 载入失败：" + e.message +
+    "<br>请先运行 <code>npm run build-trail-profile -- \"&lt;kml路径&gt;\"</code> 生成 src/trail-profile-data.json";
+  throw e;
+}
+$("boot").remove();
+$("hint").textContent =
+  `${(GEO.data.meta.trackName || "轨迹").trim()} · ${GEO.stats.distKm} km · ` +
+  `海拔 ${GEO.stats.minEle}~${GEO.stats.maxEle} m · 标注 ${GEO.marks.length} 个 · 等距样本 ${GEO.dist.length}`;
+
+const esc = (t) =>
+  String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// ===========================================================================
+// 参数面板：由 PARAM_GROUPS 生成（不手写 45 个控件）
+// ===========================================================================
+const panel = $("panel");
+const controls = []; // { group, key, set(v), primary }
+
+function hexOf(css, fallback) {
+  if (typeof css !== "string") return fallback;
+  if (/^#[0-9a-fA-F]{3}$/.test(css)) return "#" + css.slice(1).split("").map((c) => c + c).join("");
+  const m = css.match(/rgba?\(([^)]+)\)/);
+  if (!m) return fallback;
+  const p = m[1].split(",").map(parseFloat);
+  return "#" + p.slice(0, 3).map((n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0")).join("");
+}
+
+// ===========================================================================
+// 自定义途经点编辑器
+//   参数里存的是 JSON 字符串（轨迹.自定义途经点），这里给它一个列表式 UI：
+//   名称 / 里程 / 颜色 + 删除，外加「用当前里程添加」。
+//   ★ 为什么以「里程 km」为主：里程是这套动画的统一坐标 —— 剖面游标位置、地图上的
+//     点位、右上读数全由它推出。所以「在剖面上看到哪就加在哪」，绝不会有对不齐的问题。
+//     外部导入的经纬度条目会显示为只读标签（渲染时自动吸附到最近的轨迹点）。
+// ===========================================================================
+let wpArr = [];          // 正在编辑的数组（真身）
+let wpBrokenRaw = null;  // JSON 解析失败时保留原文，绝不把用户数据抹掉
+let wpAddBtn = null;     // 底部「加在当前里程」按钮（文案随播放位置刷新）
+let wpLastKm = 0;        // 最近一帧的里程（km）
+let wpEl = null;         // 编辑器根节点（画布拖动 / 定位按钮要重建列表）
+let wpSel = -1;          // 正在画布上拖动的点（高亮对应的行）
+const wpOpen = new Set(); // 已展开样式明细的下标
+let wpPosRefs = [];      // [{km,lng,lat}] —— 拖动时只改定位输入框，不重建整个列表
+
+// 「跟随默认」的语义 = **删掉该键**，而不是写一个假值；
+// 否则一个点一旦被碰过就再也回不到全局默认（想恢复只能手改 JSON）。
+const wpSet = (w, k, v) => {
+  if (v === null || v === undefined || v === "" || (typeof v === "number" && !Number.isFinite(v))) delete w[k];
+  else w[k] = v;
+};
+const wpHas = (w, k) => w[k] !== undefined && w[k] !== null && w[k] !== "";
+const numOr = (v, fb) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fb;
+};
+/** 形状徽标用的字符（一眼看出这行是什么形状） */
+const SHAPE_GLYPH = { 圆点: "●", 圆环: "◎", 菱形: "◆", 方块: "■", 三角: "▲", 图钉: "📍", 十字: "✚", 无: "—" };
+
+/** 某点的实际里程（两种定位方式都归一成米） */
+function effDistM(w) {
+  const ll = w["经纬度"];
+  if (Array.isArray(ll) && ll.length >= 2) {
+    const a = Number(ll[0]);
+    const b = Number(ll[1]);
+    if (Number.isFinite(a) && Number.isFinite(b)) return nearestDistOnTrack(GEO, mercX(a), mercY(b));
+  }
+  const km = Number(w["里程km"]);
+  return Number.isFinite(km) ? Math.max(0, Math.min(GEO.totalM, km * 1000)) : 0;
+}
+
+/**
+ * 把点移到指定里程（米）。
+ * ★ 按该点**原本的定位方式**回写：本来是经纬度的就回写经纬度、本来按里程的就写里程。
+ *   这样拖动不会悄悄改变用户选择的数据形态（否则从外部导入的经纬度点一拖就变成里程点了）。
+ *   经纬度回写的是「吸附后轨迹点」的真实经纬度，所以再解析回来还是同一个里程（往返稳定）。
+ */
+function setPos(w, distM) {
+  const d = Math.max(0, Math.min(GEO.totalM, distM));
+  if (Array.isArray(w["经纬度"])) {
+    const p = sampleAt(GEO, d);
+    w["经纬度"] = [Number((p.x * 360 - 180).toFixed(6)), Number(invMercY(p.y).toFixed(6))];
+    delete w["里程km"];
+  } else {
+    w["里程km"] = Number((d / 1000).toFixed(3));
+  }
+}
+
+/** 里程 → 帧。生长缓动可能是非线性，所以对缓动函数做二分反解，而不是假定线性 */
+function frameForDistM(distM) {
+  const A = { ...DEFAULTS["动画节奏"], ...(PROPS["动画节奏"] ?? {}) };
+  const ease = EASING_FN[String(A["生长缓动"])] ?? EASING_FN["线性"];
+  const grow = Math.max(1, Math.round(clampNum(A["时长秒"], 3, 180) * FPS));
+  const target = Math.max(0, Math.min(1, distM / GEO.totalM));
+  let lo = 0, hi = 1;
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    if (ease(mid) < target) lo = mid; else hi = mid;
+  }
+  // 多走 2% 生长长度：让「走到后出现」的点正好已经浮现，而不是停在 pop=0 的看不见状态
+  return Math.max(0, Math.min(DUR - 1, Math.round(((lo + hi) / 2) * grow + grow * 0.02)));
+}
+function clampNum(v, lo, hi) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : lo;
+}
+
+function wpParse(raw) {
+  if (Array.isArray(raw)) return { arr: raw, ok: true };
+  const t = typeof raw === "string" ? raw.trim() : "";
+  if (!t) return { arr: [], ok: true };
+  try {
+    const a = JSON.parse(t);
+    return Array.isArray(a) ? { arr: a, ok: true } : { arr: [], ok: false };
+  } catch {
+    return { arr: [], ok: false };
+  }
+}
+
+function wpCommit() {
+  PROPS["轨迹"]["自定义途经点"] = JSON.stringify(wpArr);
+  onChanged();
+}
+
+function wpRenderBroken(el) {
+  el.innerHTML = "";
+  const d = document.createElement("div");
+  d.className = "wp-bad";
+  d.textContent = "⚠ 「自定义途经点」不是合法 JSON 数组。已保留原文、不做任何改动，修正后自动恢复编辑：";
+  const ta = document.createElement("textarea");
+  ta.value = wpBrokenRaw ?? "";
+  ta.addEventListener("change", () => {
+    if (!wpParse(ta.value).ok) {
+      toast("仍然是非法 JSON，未保存", true);
+      return;
+    }
+    PROPS["轨迹"]["自定义途经点"] = ta.value;
+    onChanged();
+  });
+  d.appendChild(ta);
+  el.appendChild(d);
+}
+
+// ---- 明细里的三种控件 ----
+function dRow(parent, labelText, nodes) {
+  const r = document.createElement("div");
+  r.className = "wp-drow";
+  const lb = document.createElement("span");
+  lb.className = "wp-dlb";
+  lb.textContent = labelText;
+  r.appendChild(lb);
+  for (const n of nodes) r.appendChild(n);
+  parent.appendChild(r);
+  return r;
+}
+/** range + number 联动。inherited = 该字段没有单点覆盖、当前显示的是全局默认值（整体变淡） */
+function numCtl(value, { min, max, step }, onInput, inherited) {
+  const wrap = document.createElement("span");
+  wrap.className = "wp-num";
+  const sl = document.createElement("input");
+  Object.assign(sl, { type: "range", min, max, step });
+  const nb = document.createElement("input");
+  Object.assign(nb, { type: "number", min, max, step });
+  sl.value = value;
+  nb.value = value;
+  if (inherited) { sl.style.opacity = "0.5"; nb.style.opacity = "0.5"; }
+  sl.addEventListener("input", () => { nb.value = sl.value; onInput(Number(sl.value)); });
+  nb.addEventListener("change", () => { sl.value = nb.value; onInput(Number(nb.value)); });
+  wrap.append(sl, nb);
+  return wrap;
+}
+function selCtl(value, options, onChange, inherited) {
+  const sl = document.createElement("select");
+  if (inherited) sl.className = "inherited";
+  for (const o of options) {
+    const op = document.createElement("option");
+    op.value = o;
+    op.textContent = o;
+    sl.appendChild(op);
+  }
+  sl.value = value;
+  sl.addEventListener("change", () => { sl.className = ""; onChange(sl.value); });
+  return sl;
+}
+function colorCtl(value, onChange, inherited) {
+  const ci = document.createElement("input");
+  ci.type = "color";
+  if (inherited) ci.className = "inherited";
+  ci.value = /^#[0-9a-fA-F]{6}$/.test(value ?? "") ? value : hexOf(value, "#FFD54F");
+  ci.addEventListener("input", () => { ci.className = ""; onChange(ci.value); });
+  return ci;
+}
+
+function wpRender(el) {
+  wpEl = el;
+  el.innerHTML = "";
+  wpPosRefs = [];
+
+  const hd = document.createElement("div");
+  hd.className = "wp-hd";
+  hd.innerHTML = `<span>途经点 <b>${wpArr.length}</b> 个</span><span>里程单位 km</span>`;
+  el.appendChild(hd);
+
+  const tip = document.createElement("div");
+  tip.className = "wp-tip";
+  tip.innerHTML =
+    "预览里可<b>拖动标记</b>改位置（自动吸附到轨迹）、<b>点空白处</b>就在最近轨迹点新增一个。" +
+    "每个点的形状/大小/字号/颜色/标签位置都能单独设，没设的字段跟随「轨迹」组里的全局默认（灰色显示）。";
+  el.appendChild(tip);
+
+  if (!wpArr.length) {
+    const e = document.createElement("div");
+    e.className = "wp-empty";
+    e.textContent = "还没有途经点。拖播放条到想要的位置点下面的按钮，或直接在预览里点轨迹任意处。";
+    el.appendChild(e);
+  }
+
+  // 全局默认值（明细里以「灰色 + 实际值」的形式呈现，让用户知道现在生效的是什么）
+  const g = PROPS["轨迹"];
+  const gdef = {
+    颜色: g["途经点颜色"],
+    字号: g["途经点字号"],
+    形状: g["途经点形状"],
+    大小: g["途经点大小"],
+    标签位置: g["途经点标签位置"],
+    标签偏移: g["途经点标签偏移"],
+    透明度: g["途经点透明度"],
+  };
+
+  wpArr.forEach((w, i) => {
+    const box = document.createElement("div");
+    box.className = "wp-item" + (wpSel === i ? " sel" : "");
+    el.appendChild(box);
+
+    // ---------- 第一行：名称 | 定位 | 颜色 | 形状徽标 | 展开 | 删除 ----------
+    const top = document.createElement("div");
+    top.className = "wp-line";
+    box.appendChild(top);
+
+    const nm = document.createElement("input");
+    nm.type = "text";
+    nm.value = w["名称"] ?? "";
+    nm.placeholder = "名称";
+    nm.addEventListener("input", () => { w["名称"] = nm.value; wpCommit(); });
+    top.appendChild(nm);
+
+    const refs = { km: null, lng: null, lat: null };
+    const ll = w["经纬度"];
+    const hasLL = Array.isArray(ll) && Number.isFinite(Number(ll[0])) && Number.isFinite(Number(ll[1]));
+    if (hasLL) {
+      const mkLL = (v, title) => {
+        const inp = document.createElement("input");
+        inp.type = "number";
+        inp.step = 0.000001;
+        inp.className = "wp-ll";
+        inp.value = Number(v).toFixed(5);
+        inp.title = title;
+        return inp;
+      };
+      const lngI = mkLL(ll[0], "经度（该点由经纬度定位，渲染时吸附到最近的轨迹点）");
+      const latI = mkLL(ll[1], "纬度");
+      const push = () => {
+        const a = Number(lngI.value);
+        const b = Number(latI.value);
+        if (Number.isFinite(a) && Number.isFinite(b)) {
+          w["经纬度"] = [a, b];
+          wpCommit();
+        }
+      };
+      lngI.addEventListener("change", push);
+      latI.addEventListener("change", push);
+      top.append(lngI, latI);
+      refs.lng = lngI;
+      refs.lat = latI;
+    } else {
+      const km = document.createElement("input");
+      km.type = "number";
+      km.step = 0.01;
+      km.min = 0;
+      km.value = numOr(w["里程km"], 0);
+      km.title = "累计里程 —— 与剖面游标是同一套坐标";
+      km.addEventListener("change", () => { w["里程km"] = Math.max(0, Number(km.value) || 0); wpCommit(); });
+      const u = document.createElement("span");
+      u.className = "wp-unit";
+      u.textContent = "km";
+      top.append(km, u);
+      refs.km = km;
+    }
+    wpPosRefs[i] = refs;
+
+    const cl = colorCtl(w["颜色"] ?? gdef.颜色, (v) => { wpSet(w, "颜色", v); wpCommit(); }, !wpHas(w, "颜色"));
+    cl.title = "该点颜色（改一下就变成「单独配色」；明细里的「↺ 跟随默认」可清掉）";
+    top.appendChild(cl);
+
+    const shapeNow = w["形状"] ?? gdef.形状;
+    const sd = document.createElement("span");
+    sd.className = "wp-shape";
+    sd.textContent = SHAPE_GLYPH[shapeNow] ?? "●";
+    sd.title = `形状：${shapeNow}${wpHas(w, "形状") ? "" : "（跟随全局默认）"}`;
+    top.appendChild(sd);
+
+    const ex = document.createElement("button");
+    ex.textContent = wpOpen.has(i) ? "▴" : "▾";
+    ex.title = "展开 / 收起样式明细";
+    ex.addEventListener("click", () => {
+      if (wpOpen.has(i)) wpOpen.delete(i); else wpOpen.add(i);
+      wpRender(el);
+    });
+    top.appendChild(ex);
+
+    const del = document.createElement("button");
+    del.textContent = "✕";
+    del.title = "删除该途经点";
+    del.addEventListener("click", () => {
+      wpArr.splice(i, 1);
+      wpOpen.clear();
+      wpSel = -1;
+      wpCommit();
+      wpRender(el);
+    });
+    top.appendChild(del);
+
+    if (!wpOpen.has(i)) return;
+
+    // ---------- 明细：样式 ----------
+    const dt = document.createElement("div");
+    dt.className = "wp-detail";
+    box.appendChild(dt);
+
+    const own = (k, v, after) => { wpSet(w, k, v); wpCommit(); if (after) wpRender(el); };
+
+    dRow(dt, "形状", [selCtl(shapeNow, WP_SHAPES, (v) => own("形状", v, true), !wpHas(w, "形状"))]);
+    dRow(dt, "大小", [numCtl(numOr(w["大小"], gdef.大小), { min: 1, max: 40, step: 0.5 }, (v) => own("大小", v), !wpHas(w, "大小"))]);
+    dRow(dt, "字号", [numCtl(numOr(w["字号"], gdef.字号), { min: 8, max: 48, step: 1 }, (v) => own("字号", v), !wpHas(w, "字号"))]);
+    dRow(dt, "标签位置", [selCtl(w["标签位置"] ?? gdef.标签位置, WP_LABEL_POS, (v) => own("标签位置", v, true), !wpHas(w, "标签位置"))]);
+    dRow(dt, "标签偏移", [numCtl(numOr(w["标签偏移"], gdef.标签偏移), { min: 0, max: 120, step: 1 }, (v) => own("标签偏移", v), !wpHas(w, "标签偏移"))]);
+    dRow(dt, "透明度", [numCtl(numOr(w["透明度"], gdef.透明度), { min: 0, max: 1, step: 0.02 }, (v) => own("透明度", v), !wpHas(w, "透明度"))]);
+    dRow(dt, "标签颜色", [colorCtl(w["标签颜色"] ?? (w["颜色"] ?? gdef.颜色), (v) => own("标签颜色", v), !wpHas(w, "标签颜色"))]);
+
+    const hideCb = document.createElement("input");
+    hideCb.type = "checkbox";
+    hideCb.checked = w["显示"] !== false;
+    hideCb.addEventListener("change", () => {
+      if (hideCb.checked) delete w["显示"]; else w["显示"] = false;
+      wpCommit();
+    });
+    dRow(dt, "参与渲染", [hideCb]);
+
+    // ---------- 明细：动作 ----------
+    const acts = document.createElement("div");
+    acts.className = "wp-acts";
+
+    const bLoc = document.createElement("button");
+    bLoc.textContent = "⏱ 定位到该点";
+    bLoc.title = "把播放位置跳到这个途经点的里程";
+    bLoc.addEventListener("click", () => { frame = frameForDistM(effDistM(w)); render(); });
+    acts.appendChild(bLoc);
+
+    const bHere = document.createElement("button");
+    bHere.textContent = `↦ 用当前里程 ${wpLastKm.toFixed(2)}`;
+    bHere.title = "把这个点移到当前播放位置";
+    bHere.addEventListener("click", () => { setPos(w, wpLastKm * 1000); wpCommit(); wpRender(el); });
+    acts.appendChild(bHere);
+
+    const bClr = document.createElement("button");
+    bClr.textContent = "↺ 跟随默认";
+    bClr.title = "清掉这个点的全部样式覆盖（定位方式不变）";
+    bClr.addEventListener("click", () => {
+      for (const k of ["颜色", "标签颜色", "形状", "大小", "字号", "标签位置", "标签偏移", "透明度"]) delete w[k];
+      wpCommit();
+      wpRender(el);
+    });
+    acts.appendChild(bClr);
+
+    dt.appendChild(acts);
+  });
+
+  const addBar = document.createElement("div");
+  addBar.className = "wp-add";
+  wpAddBtn = document.createElement("button");
+  wpAddBtn.textContent = `＋ 加在当前里程 ${wpLastKm.toFixed(2)} km`;
+  wpAddBtn.addEventListener("click", () => {
+    wpArr.push({ 名称: `途经点 ${wpArr.length + 1}`, 里程km: Number(wpLastKm.toFixed(2)) });
+    wpOpen.clear();
+    wpCommit();
+    wpRender(el);
+    const inputs = el.querySelectorAll(".wp-item input[type=text]");
+    const last = inputs[inputs.length - 1];
+    if (last) { last.focus(); last.select(); }
+  });
+  addBar.appendChild(wpAddBtn);
+  el.appendChild(addBar);
+}
+
+function buildWaypointEditor(box, g, it) {
+  const el = document.createElement("div");
+  el.className = "wp";
+  box.appendChild(el);
+  wpEl = el;
+
+  const sync = (raw) => {
+    const p = wpParse(raw);
+    if (!p.ok) {
+      wpBrokenRaw = raw;
+      wpRenderBroken(el);
+      return;
+    }
+    wpBrokenRaw = null;
+    // 内容没变就不要重建 DOM —— 否则每帧 syncControls 都会打断正在输入的名称。
+    // ⚠ 首次必须渲染：初始 wpArr 与文件里的空数组内容相同，若不看 ready 标记，
+    //   首屏会被这条「无变化」判断整个跳过，编辑器就是一片空白。
+    if (el.dataset.ready === "1" && JSON.stringify(p.arr) === JSON.stringify(wpArr)) return;
+    el.dataset.ready = "1";
+    wpArr = p.arr;
+    wpRender(el);
+  };
+
+  controls.push({ group: g.group, key: it.key, primary: el, set: sync });
+  sync(PROPS[g.group][it.key]);
+}
+
+for (const g of PARAM_GROUPS) {
+  const box = document.createElement("details");
+  box.className = "grp";
+  box.open = ["地图", "轨迹", "海拔剖面", "动画节奏"].includes(g.group);
+  const sum = document.createElement("summary");
+  sum.textContent = g.group;
+  box.appendChild(sum);
+  if (g.hint) {
+    const h = document.createElement("div");
+    h.className = "ghint";
+    h.textContent = g.hint;
+    box.appendChild(h);
+  }
+
+  for (const it of g.items) {
+    // 「自定义途经点」不是标量参数，交给专用编辑器（列表式增删改）
+    if (it.ui === "waypoints") {
+      buildWaypointEditor(box, g, it);
+      continue;
+    }
+    const row = document.createElement("div");
+    row.className = "row";
+    const lb = document.createElement("label");
+    // label 可选：参数键名多半是给代码看的（如「显示」），控件上要显示人话（如「显示海拔图」）
+    lb.textContent = it.label ?? it.key;
+    lb.title = it.key;
+    row.appendChild(lb);
+
+    const set = (v) => { PROPS[g.group][it.key] = v; onChanged(); };
+    let primary = null, apply = null;
+
+    if (it.type === "range") {
+      const sl = document.createElement("input");
+      Object.assign(sl, { type: "range", min: it.min, max: it.max, step: it.step });
+      const nb = document.createElement("input");
+      Object.assign(nb, { type: "number", min: it.min, max: it.max, step: it.step });
+      const un = document.createElement("span");
+      un.className = "unit";
+      un.textContent = it.unit ?? "";
+      sl.addEventListener("input", () => set(Number(sl.value)));
+      nb.addEventListener("change", () => set(Number(nb.value)));
+      row.append(sl, nb, un);
+      primary = sl;
+      apply = (v) => { sl.value = v; nb.value = v; };
+    } else if (it.type === "color") {
+      const ci = document.createElement("input");
+      ci.type = "color";
+      const tx = document.createElement("input");
+      tx.type = "text";
+      tx.style.flex = "1";
+      ci.addEventListener("input", () => set(ci.value));
+      tx.addEventListener("change", () => set(tx.value.trim()));
+      row.append(ci, tx);
+      primary = tx;
+      apply = (v) => { ci.value = /^#[0-9a-fA-F]{6}$/.test(v) ? v : hexOf(v, ci.value); tx.value = v; };
+    } else if (it.type === "bool") {
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.addEventListener("change", () => set(cb.checked));
+      row.appendChild(cb);
+      primary = cb;
+      apply = (v) => { cb.checked = !!v; };
+    } else if (it.type === "select") {
+      const sl = document.createElement("select");
+      for (const o of it.options) {
+        const op = document.createElement("option");
+        op.value = o;
+        op.textContent = o;
+        sl.appendChild(op);
+      }
+      sl.addEventListener("change", () => set(sl.value));
+      row.appendChild(sl);
+      primary = sl;
+      apply = (v) => { sl.value = v; };
+    } else {
+      const ti = document.createElement("input");
+      ti.type = "text";
+      ti.addEventListener("input", () => set(ti.value));
+      row.appendChild(ti);
+      primary = ti;
+      apply = (v) => { ti.value = v ?? ""; };
+    }
+    box.appendChild(row);
+    controls.push({ group: g.group, key: it.key, set: apply, primary });
+  }
+  panel.appendChild(box);
+}
+
+// 顶部快捷开关「海拔图」—— 与参数表里的「海拔剖面 · 显示海拔图」是**同一个键**的第二个入口，
+// 不复制状态：两边任一改动都写 PROPS["海拔剖面"]["显示"]，再由 syncControls() 双向回填。
+{
+  const cb = $("chk-profile");
+  cb.addEventListener("change", () => {
+    PROPS["海拔剖面"]["显示"] = cb.checked;
+    onChanged();
+  });
+  controls.push({ group: "海拔剖面", key: "显示", primary: cb, set: (v) => { cb.checked = !!v; } });
+}
+
+/** 把 PROPS 的当前值刷回控件；正被编辑的那个控件跳过（否则打字会被打断） */
+function syncControls() {
+  const act = document.activeElement;
+  for (const c of controls) {
+    if (c.primary === act) continue;
+    // 复合控件（途经点编辑器）内部有多个输入框：焦点落在它内部时整体跳过，
+    // 否则每帧同步都会重建列表，正在输入的名称会被打断。
+    if (c.primary && c.primary.contains && act && c.primary.contains(act)) continue;
+    c.set(PROPS[c.group][c.key]);
+  }
+}
+
+function onChanged() {
+  DUR = trailDurationInFrames(PROPS, DEFAULTS, FPS);
+  if (frame > DUR - 1) frame = DUR - 1;
+  $("seek").max = DUR - 1;
+  syncControls();
+  render();
+}
+
+// ===========================================================================
+// 舞台渲染
+// ===========================================================================
+const stage = $("stage");
+const svgMap = $("svg-map"), svgProf = $("svg-prof");
+const mapDefs = $("map-defs"), mapClip = $("map-clip"), mapTiles = $("map-tiles"), mapRest = $("map-rest");
+const mapDark = $("map-dark"), mapTrack = $("map-track");
+const profDefs = $("prof-defs"), profRest = $("prof-rest");
+const ovTitle = $("ov-title"), ovHud = $("ov-hud");
+
+const NS = "http://www.w3.org/2000/svg";
+function mk(tag, attrs) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) if (attrs[k] != null) e.setAttribute(k, attrs[k]);
+  return e;
+}
+
+/** 数字统一保留 3 位小数：图元里有很多 r/sw/cx 之类，直接 toString 会出现一长串浮点尾巴 */
+const n3 = (v) => (typeof v === "number" ? Number(v.toFixed(3)) : v);
+
+/**
+ * 场景模型给的图元数组 → SVG 字符串。
+ * ★ 与 Remotion 组件的 MarkShapes 是同一个 switch：只做「按 t 建元素」，
+ *   不做任何形状推导（顶点/控制点/粗细都在 markShapes() 里算好了）。
+ */
+function shapeSvg(shapes) {
+  let out = "";
+  for (const sh of shapes) {
+    const stroke = sh.stroke != null ? ` stroke="${sh.stroke}"` : "";
+    const sw = sh.sw != null ? ` stroke-width="${n3(sh.sw)}"` : "";
+    const so = sh.so != null ? ` stroke-opacity="${n3(sh.so)}"` : "";
+    if (sh.t === "circle") {
+      out += `<circle cx="${n3(sh.cx)}" cy="${n3(sh.cy)}" r="${n3(sh.r)}" fill="${sh.fill ?? "none"}"${stroke}${sw}${so}/>`;
+    } else if (sh.t === "line") {
+      out += `<line x1="${n3(sh.x1)}" y1="${n3(sh.y1)}" x2="${n3(sh.x2)}" y2="${n3(sh.y2)}" stroke="${sh.stroke}" stroke-width="${n3(sh.sw)}" stroke-linecap="round"/>`;
+    } else {
+      out += `<path d="${sh.d}" fill="${sh.fill ?? "none"}"${stroke}${sw}${so}/>`;
+    }
+  }
+  return out;
+}
+
+const tilePool = new Map();
+let mapDefsKey = "", profDefsKey = "";
+let lastScene = null; // 最近一帧的场景对象（画布交互要用相机 gx/gy/k 与当前点位）
+
+// ---------------------------------------------------------------------------
+// 轨迹层：path 的 d 是 3100 个点（≈50 KB 字符串），而平面全景下变换 (gx,gy,k) **恒定**，
+// 每帧只有「已走比例」在变。所以把轨迹单独成层：只在慢变量变化时重建 DOM，
+// 每帧只写两个 stroke-dasharray 属性 —— 这是预览能跑满 60fps 的关键。
+// ---------------------------------------------------------------------------
+let trackKey = "";
+let trackDyn = { glow: null, done: null };
+function syncTrack(m) {
+  const key = [
+    m.gx, m.gy, m.k,
+    m.ghost.color, m.ghost.widthUser, m.ghost.opacity,
+    m.glow.on, m.glow.color, m.glow.widthUser, m.glow.std,
+    m.done.color, m.done.widthUser,
+  ].join("|");
+  if (key !== trackKey) {
+    mapTrack.innerHTML = "";
+    const g = mk("g", { transform: `translate(${m.gx.toFixed(3)} ${m.gy.toFixed(3)}) scale(${m.k})` });
+    g.appendChild(mk("path", {
+      d: m.trackPath, fill: "none", stroke: m.ghost.color, "stroke-opacity": m.ghost.opacity,
+      "stroke-width": m.ghost.widthUser, "stroke-linecap": "round", "stroke-linejoin": "round",
+    }));
+    let glow = null;
+    if (m.glow.on) {
+      glow = mk("path", {
+        d: m.trackPath, fill: "none", stroke: m.glow.color, "stroke-opacity": 0.55,
+        "stroke-width": m.glow.widthUser, "stroke-linecap": "round", "stroke-linejoin": "round",
+        filter: "url(#m-glow)", pathLength: 1,
+      });
+      g.appendChild(glow);
+    }
+    const done = mk("path", {
+      d: m.trackPath, fill: "none", stroke: m.done.color,
+      "stroke-width": m.done.widthUser, "stroke-linecap": "round", "stroke-linejoin": "round",
+      pathLength: 1,
+    });
+    g.appendChild(done);
+    mapTrack.appendChild(g);
+    trackDyn = { glow, done };
+    trackKey = key;
+  }
+  if (trackDyn.glow) trackDyn.glow.setAttribute("stroke-dasharray", m.glow.dash);
+  trackDyn.done.setAttribute("stroke-dasharray", m.done.dash);
+}
+
+function fitStage() {
+  const o = $("stageouter");
+  // ⚠ 尺寸必须有兜底且绝不写入 0：容器是 flex 子项，首屏可能还没量到真实尺寸，
+  //   写入 0 会让 stage 永久 0×0（本项目踩过的坑）。
+  const cw = o.clientWidth || window.innerWidth || document.documentElement.clientWidth || W;
+  const ch = o.clientHeight || window.innerHeight || document.documentElement.clientHeight || H;
+  const s = Math.max(0.05, Math.min(cw / W, ch / H));
+  stage.style.transform = `scale(${s})`;
+}
+
+function render() {
+  const s = buildTrailScene(GEO, DEFAULTS, PROPS, frame, { width: W, height: H, fps: FPS });
+  const m = s.map;
+
+  // ★ 预览底板跟随场景的 bgColor。原来是 CSS 写死的 #0a1017 —— 「背景色」滑块
+  //   调了预览不动、「透明背景」勾了也看不出来。透明时切棋盘格。
+  if (s.bgColor === "transparent") {
+    if (!stage.classList.contains("transparent-bg")) stage.classList.add("transparent-bg");
+    stage.style.background = "";
+  } else {
+    if (stage.classList.contains("transparent-bg")) stage.classList.remove("transparent-bg");
+    stage.style.background = s.bgColor;
+  }
+
+  // ---------- 地图 ----------
+  const dk = `<linearGradient id="m-dark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="${m.darkTop}"/><stop offset="100%" stop-color="${m.darkBottom}"/></linearGradient>
+    <linearGradient id="m-top" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#000" stop-opacity="${m.topFadeAlpha.toFixed(3)}"/><stop offset="100%" stop-color="#000" stop-opacity="0"/></linearGradient>
+    <filter id="m-glow" x="-25%" y="-25%" width="150%" height="150%"><feGaussianBlur stdDeviation="${m.glow.std}"/></filter>`;
+  const dkKey = `${m.darkTop}|${m.darkBottom}|${m.topFadeAlpha}|${m.glow.std}`;
+  if (dkKey !== mapDefsKey) {
+    mapDefs.innerHTML = `<clipPath id="m-clip"><rect x="0" y="0" width="${W}" height="${s.mapH}"/></clipPath>${dk}`;
+    mapClip.setAttribute("clip-path", "url(#m-clip)");
+    mapDefsKey = dkKey;
+  } else {
+    // mapH 变了但其余没变：只需更新裁剪矩形
+    const r = mapDefs.querySelector("#m-clip rect");
+    if (r) r.setAttribute("height", s.mapH);
+  }
+
+  mapTiles.setAttribute("opacity", m.opacity);
+  mapTiles.style.filter = m.filter;
+
+  // 底图叠加层：仅在开启底图时渲染（平面展示模式下它们是纯负担）
+  mapDark.innerHTML = m.showBase
+    ? `<rect x="0" y="0" width="${W}" height="${s.mapH}" fill="url(#m-dark)"/>` +
+      `<rect x="0" y="0" width="${W}" height="${m.topFadeHeight}" fill="url(#m-top)"/>`
+    : "";
+
+  // 轨迹层：path 的 d 有 3100 个点，而变换在平面全景下恒定 → 单独成层、只在慢变量变化时重建
+  syncTrack(m);
+
+  const parts = [];
+  if (m.start) {
+    parts.push(`<circle cx="${m.start.x}" cy="${m.start.y}" r="7" fill="#FFD54F"/>`);
+    parts.push(`<circle cx="${m.start.x}" cy="${m.start.y}" r="13" fill="none" stroke="#FFD54F" stroke-width="2" stroke-opacity="0.55"/>`);
+  }
+  if (m.end) parts.push(`<circle cx="${m.end.x}" cy="${m.end.y}" r="13" fill="none" stroke="#FF4081" stroke-width="4"/>`);
+  if (m.head) {
+    parts.push(`<circle cx="${m.head.x}" cy="${m.head.y}" r="${(m.head.r * 2.1 * m.head.pulse).toFixed(2)}" fill="${m.head.color}" opacity="0.2"/>`);
+    parts.push(`<circle cx="${m.head.x}" cy="${m.head.y}" r="${m.head.r}" fill="${m.head.color}"/>`);
+  }
+  for (const mk2 of m.marks.list) {
+    // ★ 图元与标签几何全部来自场景模型（buildMark / markShapes）：
+    //   这里只做「平移到点位 + 按 t 建元素」，与 Remotion 组件是同一套数据、同一套映射。
+    //   所以「调参台里看到的形状」必然等于出片的形状。
+    const inner = mk2.shapes?.length
+      ? `<g transform="translate(${mk2.x.toFixed(2)} ${mk2.y.toFixed(2)})">${shapeSvg(mk2.shapes)}</g>`
+      : "";
+    const lb = mk2.label
+      ? `<text x="${mk2.label.x.toFixed(2)}" y="${mk2.label.y.toFixed(2)}" text-anchor="${mk2.label.anchor}" ` +
+        `font-size="${mk2.label.fontSize}" font-weight="${mk2.label.weight}" fill="${mk2.label.fill}" ` +
+        `stroke="${mk2.label.haloColor}" stroke-width="${mk2.label.haloWidth.toFixed(2)}" paint-order="stroke">${esc(mk2.label.text)}</text>`
+      : "";
+    parts.push(`<g opacity="${mk2.opacity.toFixed(3)}">${inner}${lb}</g>`);
+  }
+  mapRest.innerHTML = parts.join("");
+  svgMap.style.opacity = s.fade;
+  lastScene = s; // 画布交互（拖标记 / 点空白加点）需要用到相机与当前点位
+
+  // 瓦片池：只增删差异项，复用的 <image> 不重新挂载（否则每帧闪烁）
+  const want = new Set(m.tiles.map((t) => t.key));
+  for (const [key, node] of tilePool) if (!want.has(key)) { node.remove(); tilePool.delete(key); }
+  for (const t of m.tiles) {
+    let node = tilePool.get(t.key);
+    if (!node) {
+      node = mk("image", { href: t.src });
+      node.setAttribute("preserveAspectRatio", "none");
+      tilePool.set(t.key, node);
+      mapTiles.appendChild(node);
+    }
+    node.setAttribute("x", t.x);
+    node.setAttribute("y", t.y);
+    node.setAttribute("width", t.w);
+    node.setAttribute("height", t.h);
+  }
+
+  // ---------- 剖面 ----------
+  const pr = s.profile;
+  if (pr) {
+    // ⚠ cursorX 不放进 key：整条显示模式下它每帧都变，放进 key 会让 defs 每帧重建。
+    //   改为重建后单独更新「已走裁剪」的宽度（一次属性写入）。
+    const pk = `${pr.plotLeft}|${pr.plotW}|${pr.plotTop}|${pr.plotH}|${pr.color}|${pr.areaAlpha}|${pr.panelAlpha}`;
+    if (pk !== profDefsKey) {
+      profDefs.innerHTML =
+        `<linearGradient id="p-area" x1="0" y1="0" x2="0" y2="1">
+           <stop offset="0%" stop-color="${pr.color}" stop-opacity="${pr.areaAlpha}"/>
+           <stop offset="100%" stop-color="${pr.color}" stop-opacity="0"/></linearGradient>
+         <linearGradient id="p-panel" x1="0" y1="0" x2="0" y2="1">
+           <stop offset="0%" stop-color="#000" stop-opacity="0"/>
+           <stop offset="45%" stop-color="#000" stop-opacity="${(0.42 * pr.panelAlpha).toFixed(3)}"/>
+           <stop offset="100%" stop-color="#000" stop-opacity="${(0.72 * pr.panelAlpha).toFixed(3)}"/></linearGradient>
+         <clipPath id="p-clip"><rect x="${pr.plotLeft}" y="${pr.plotTop - 6}" width="${pr.plotW}" height="${pr.plotH + 12}"/></clipPath>
+         <clipPath id="p-done"><rect x="0" y="${pr.plotTop - 200}" width="${pr.cursorX}" height="${pr.plotH + 400}"/></clipPath>`;
+      profDefsKey = pk;
+    }
+    const doneRect = profDefs.querySelector("#p-done rect");
+    if (doneRect) doneRect.setAttribute("width", pr.cursorX);
+    const q = [];
+    q.push(`<rect x="0" y="${pr.panelY}" width="${W}" height="${pr.panelH}" fill="url(#p-panel)"/>`);
+    if (pr.axis && pr.axis.lines) {
+      q.push(`<line x1="${pr.plotLeft}" x2="${pr.plotLeft + pr.plotW}" y1="${pr.axis.hiLineY}" y2="${pr.axis.hiLineY}" stroke="${pr.axis.color}" stroke-opacity="0.28" stroke-width="1.5"/>`);
+      q.push(`<line x1="${pr.plotLeft}" x2="${pr.plotLeft + pr.plotW}" y1="${pr.axis.loLineY}" y2="${pr.axis.loLineY}" stroke="${pr.axis.color}" stroke-opacity="0.28" stroke-width="1.5"/>`);
+    }
+    q.push(`<g clip-path="url(#p-clip)">`);
+    if (pr.areaAlpha > 0) q.push(`<path d="${pr.areaD}" fill="url(#p-area)"/>`);
+    q.push(`<path d="${pr.curveD}" fill="none" stroke="${pr.color}" stroke-opacity="${pr.ghostOpacity}" stroke-width="${pr.lineWidth}" stroke-linecap="round" stroke-linejoin="round"/>`);
+    q.push(`<g clip-path="url(#p-done)"><path d="${pr.curveD}" fill="none" stroke="${pr.color}" stroke-width="${pr.lineWidth}" stroke-linecap="round" stroke-linejoin="round"/></g>`);
+    q.push(`</g>`);
+    if (pr.axis) {
+      q.push(`<g font-size="${pr.axis.fontSize}" font-weight="500" fill="${pr.axis.color}" fill-opacity="0.92" text-anchor="end">`);
+      q.push(`<text x="${pr.axis.labelX}" y="${pr.axis.hiY}">${esc(pr.axis.hiLabel)}</text>`);
+      q.push(`<text x="${pr.axis.labelX}" y="${pr.axis.loY}">${esc(pr.axis.loLabel)}</text>`);
+      q.push(`</g>`);
+    }
+    if (pr.cursor) {
+      q.push(`<line x1="${pr.cursor.x}" x2="${pr.cursor.x}" y1="${pr.cursor.y0}" y2="${pr.cursor.y1}" stroke="${pr.cursor.color}" stroke-width="${pr.cursor.width}" stroke-opacity="0.95"/>`);
+      if (pr.cursor.r > 0) q.push(`<circle cx="${pr.cursor.x}" cy="${pr.cursor.dotY}" r="${pr.cursor.r}" fill="${pr.cursor.color}"/>`);
+    }
+    if (pr.readout) {
+      q.push(`<text x="${pr.readout.x}" y="${pr.readout.y}" text-anchor="middle" font-size="${pr.readout.fontSize}" font-weight="700" fill="${pr.readout.color}" stroke="rgba(0,0,0,0.55)" stroke-width="${(pr.readout.fontSize * 0.14).toFixed(2)}" paint-order="stroke" letter-spacing="1">${esc(pr.readout.text)}</text>`);
+    }
+    profRest.innerHTML = q.join("");
+  } else {
+    profRest.innerHTML = "";
+  }
+  svgProf.style.opacity = s.fade;
+
+  // ---------- 标题 / 右上读数（HTML，与 Remotion 的 DOM 结构一致） ----------
+  ovTitle.style.opacity = s.fade;
+  if (s.title) {
+    ovTitle.style.display = "";
+    ovTitle.style.left = s.title.x + "px";
+    ovTitle.style.top = s.title.y + "px";
+    ovTitle.innerHTML =
+      `<div style="font-size:${s.title.main.fontSize}px;font-weight:700;color:${s.title.main.color};letter-spacing:4px">${esc(s.title.main.text)}</div>` +
+      `<div style="font-size:${s.title.sub.fontSize}px;color:${s.title.sub.color};opacity:.75;margin-top:8px;letter-spacing:1px">${esc(s.title.sub.text)}</div>`;
+  } else ovTitle.style.display = "none";
+
+  ovHud.style.opacity = s.fade * 0.95;
+  if (s.hud) {
+    ovHud.style.display = "";
+    ovHud.style.right = (W - s.hud.x) + "px";
+    ovHud.style.top = s.hud.y + "px";
+    ovHud.style.textAlign = "right";
+    ovHud.style.fontFamily = "Consolas, 'SF Mono', Menlo, monospace";
+    ovHud.style.color = s.hud.color;
+    ovHud.style.lineHeight = "1.5";
+    ovHud.style.textShadow = "0 2px 10px rgba(0,0,0,.8)";
+    ovHud.innerHTML = s.hud.lines
+      .map((l) => `<div style="font-size:${l.fontSize}px;font-weight:${l.weight};opacity:${l.opacity}">${esc(l.text)}${
+        l.suffix ? `<span style="font-size:${(l.fontSize / 1.7).toFixed(2)}px;font-weight:400;opacity:.65">${esc(l.suffix)}</span>` : ""}</div>`)
+      .join("");
+  } else ovHud.style.display = "none";
+
+  // ---------- 状态栏 ----------
+  // 海拔直接取剖面读数里的数字 —— 与画面上游标处的值同源，顺便当对齐自检
+  const eleNow = pr?.readout ? parseFloat(pr.readout.text) : NaN;
+  wpLastKm = s.distM / 1000;
+  if (wpAddBtn) wpAddBtn.textContent = `＋ 加在当前里程 ${wpLastKm.toFixed(2)} km`;
+  $("stat").innerHTML =
+    `帧 <b>${frame}</b>/${DUR - 1}　${(frame / FPS).toFixed(2)}s　` +
+    `里程 <b>${wpLastKm.toFixed(2)}</b>km　` +
+    `海拔 <b>${Number.isFinite(eleNow) ? eleNow : "—"}</b>m　` +
+    `轴 ${s.eleLo}~${s.eleHi}m　途经点 ${m.marks.list.length}　缩放 ${(m.k).toFixed(0)}`;
+  $("seek").value = frame;
+}
+
+// ===========================================================================
+// 画布交互：直接在预览上编辑途经点
+//
+// 规则（刻意做得互不冲突）：
+//   · 按下的位置命中某个标记  → 拖动改位置
+//   · 按下的位置是空白、且几乎没移动 → 在**最近的轨迹点**新增一个途经点
+// 为什么位置一定要吸附到轨迹：途经点在语义上就是「路线上的位置」，
+// 场景模型也是按里程取点渲染的（sampleAt(geo, distM)），所以标记必然落在线上；
+// 拖动时换算的正是「屏幕 → 墨卡托 → 轨迹上最近点 → 里程」这条链。
+// ===========================================================================
+const hit = $("hit");
+$("chk-edit").addEventListener("change", (e) => {
+  hit.classList.toggle("off", !e.target.checked);
+});
+
+/** 客户端坐标 → 舞台内部坐标。stage 被 CSS 缩放，必须除掉缩放系数 */
+function stagePoint(e) {
+  const r = stage.getBoundingClientRect();
+  const sc = r.width > 0 ? W / r.width : 1;
+  return { x: (e.clientX - r.left) * sc, y: (e.clientY - r.top) * sc };
+}
+
+/** 舞台坐标 → 里程：先反解相机变换回墨卡托，再取轨迹上最近点 */
+function distMAtStage(p) {
+  if (!lastScene) return 0;
+  const { gx, gy, k } = lastScene.map;
+  return nearestDistOnTrack(GEO, (p.x - gx) / k, (p.y - gy) / k);
+}
+
+/** 命中检测 → wpArr 的下标（用 wpIndex，解析跳过条目时也不会错位）；没有则 -1 */
+function hitMark(p) {
+  if (!lastScene) return -1;
+  let best = -1;
+  let bestD = Infinity;
+  for (const mk2 of lastScene.map.marks.list) {
+    if (mk2.wpIndex == null) continue; // 只认自定义途经点，KML 预置标注不参与拖动
+    const rr = Math.max(16, (mk2.size ?? 6) * 2.6); // 小标记也要好点中
+    const d = Math.hypot(p.x - mk2.x, p.y - mk2.y);
+    if (d < rr && d < bestD) { bestD = d; best = mk2.wpIndex; }
+  }
+  return best;
+}
+
+/** 拖动中只刷新定位输入框，不重建整个列表（重建会丢展开状态、也会掉帧） */
+function syncWpPos(i) {
+  const w = wpArr[i];
+  const refs = wpPosRefs[i];
+  if (!w || !refs) return;
+  if (refs.km && Number.isFinite(Number(w["里程km"]))) refs.km.value = Number(w["里程km"]);
+  const ll = w["经纬度"];
+  if (Array.isArray(ll)) {
+    if (refs.lng) refs.lng.value = Number(ll[0]).toFixed(5);
+    if (refs.lat) refs.lat.value = Number(ll[1]).toFixed(5);
+  }
+}
+
+let drag = null;       // { i, moved }：正在拖动的途经点
+let pendingAdd = null; // { x, y, moved }：在空白处按下，抬手时决定是否新增
+
+/** 在指定里程新增（拖动/点击两条路径共用） */
+function addWaypointAt(distM) {
+  const d = Math.max(0, Math.min(GEO.totalM, distM));
+  wpArr.push({ 名称: `途经点 ${wpArr.length + 1}`, 里程km: Number((d / 1000).toFixed(3)) });
+  wpOpen.clear();
+  wpSel = wpArr.length - 1;
+  wpCommit();
+  if (wpEl) wpRender(wpEl);
+  toast(`已在 ${(d / 1000).toFixed(2)} km 处新增途经点`);
+}
+
+hit.addEventListener("pointerdown", (e) => {
+  if (!$("chk-edit").checked) return;
+  e.preventDefault();
+  const p = stagePoint(e);
+  const i = hitMark(p);
+  // 合成事件（自动化测试）没有真实 pointerId，setPointerCapture 会抛 NotFoundError；
+  // 捕获失败不影响拖动本身（指针仍在 #hit 上），所以吞掉即可。
+  try { hit.setPointerCapture(e.pointerId); } catch {}
+  if (i >= 0) {
+    drag = { i, moved: false };
+    wpSel = i;
+    hit.classList.add("dragging");
+    if (wpEl) wpRender(wpEl); // 高亮正在拖动的那一行
+  } else {
+    pendingAdd = { x: p.x, y: p.y, moved: false };
+  }
+});
+
+hit.addEventListener("pointermove", (e) => {
+  const p = stagePoint(e);
+  if (drag) {
+    const w = wpArr[drag.i];
+    if (!w) return;
+    drag.moved = true;
+    setPos(w, distMAtStage(p));
+    // 轻量路径：只更新 JSON + 重画画面 + 定位输入框
+    PROPS["轨迹"]["自定义途经点"] = JSON.stringify(wpArr);
+    DUR = trailDurationInFrames(PROPS, DEFAULTS, FPS);
+    render();
+    syncWpPos(drag.i);
+    return;
+  }
+  if (pendingAdd) {
+    if (Math.hypot(p.x - pendingAdd.x, p.y - pendingAdd.y) > 4) pendingAdd.moved = true;
+    return;
+  }
+  hit.classList.toggle("near", hitMark(p) >= 0);
+});
+
+hit.addEventListener("pointerup", (e) => {
+  hit.classList.remove("dragging");
+  if (drag) {
+    const { i, moved } = drag;
+    drag = null;
+    if (moved) {
+      wpCommit();          // 走完整路径：触发 UI 同步并把列表重建回最终状态
+      if (wpEl) wpRender(wpEl);
+      toast(`途经点 ${i + 1} 已移到 ${(effDistM(wpArr[i] ?? {}) / 1000).toFixed(2)} km`);
+    }
+    return;
+  }
+  if (pendingAdd) {
+    const p = stagePoint(e);
+    const moved = Math.hypot(p.x - pendingAdd.x, p.y - pendingAdd.y);
+    const isClick = !pendingAdd.moved && moved <= 4;
+    pendingAdd = null;
+    // 只在「地图区」内新增：剖面那一带不属于轨迹，点它多半是误触
+    if (isClick && lastScene && p.y <= lastScene.mapH) addWaypointAt(distMAtStage(p));
+  }
+});
+
+hit.addEventListener("pointercancel", () => {
+  drag = null;
+  pendingAdd = null;
+  hit.classList.remove("dragging");
+});
+
+// ===========================================================================
+// 播放循环
+// ===========================================================================
+let playing = false, lastT = 0, acc = 0;
+
+function tick(t) {
+  if (playing) {
+    if (!lastT) lastT = t;
+    acc += t - lastT;
+    lastT = t;
+    const step = 1000 / FPS;
+    let dirty = false;
+    while (acc >= step) {
+      acc -= step;
+      frame += 1;
+      dirty = true;
+      if (frame > DUR - 1) {
+        if ($("chk-loop").checked) frame = 0;
+        else { frame = DUR - 1; setPlaying(false); break; }
+      }
+    }
+    if (dirty) render();
+  }
+  requestAnimationFrame(tick);
+}
+
+function setPlaying(v) {
+  playing = v;
+  lastT = 0;
+  acc = 0;
+  $("btn-play").textContent = v ? "⏸ 暂停" : "▶ 播放";
+}
+
+$("btn-play").addEventListener("click", () => {
+  if (!playing && frame >= DUR - 1) frame = 0;
+  setPlaying(!playing);
+});
+$("btn-home").addEventListener("click", () => { frame = 0; render(); });
+$("seek").addEventListener("input", (e) => { frame = Number(e.target.value); render(); });
+window.addEventListener("keydown", (e) => {
+  if (e.code === "Space" && !/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) {
+    e.preventDefault();
+    $("btn-play").click();
+  }
+});
+
+// ===========================================================================
+// 保存 / 复制 / 重置
+// ===========================================================================
+function toast(msg, err) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.className = "toast show" + (err ? " err" : "");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => (t.className = "toast"), 3600);
+}
+
+$("btn-copy").addEventListener("click", async () => {
+  const json = JSON.stringify(PROPS, null, 2);
+  try {
+    await navigator.clipboard.writeText(json);
+    toast("已复制 Props JSON —— 可粘贴进 Remotion Studio 的 Props 面板，或 remotion render 的 --props");
+  } catch {
+    window.prompt("手动复制下面的 JSON：", json);
+  }
+});
+
+$("btn-save").addEventListener("click", async () => {
+  const body = JSON.stringify(clampPropsToSpec(PROPS, DEFAULTS));
+  try {
+    const r = await fetch("/api/save-props", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || "未知错误");
+    SAVED = JSON.parse(body);
+    for (const g of Object.keys(SAVED)) PROPS[g] = { ...SAVED[g] };
+    syncControls();
+    render();
+    toast(`✓ 已写回 src/trail-profile-defaults.json（${j.groups.join("、")}）`);
+  } catch (e) {
+    toast("✗ 保存失败：" + e.message + "　请确认是通过 npm run studio-trail 启动的", true);
+  }
+});
+
+$("btn-reload").addEventListener("click", async () => {
+  const def = await fetch("./src/trail-profile-defaults.json?_=" + Date.now()).then((r) => r.json());
+  DEFAULTS = def;
+  SAVED = structuredClone(def);
+  PROPS = structuredClone(def);
+  onChanged();
+  toast("已重新载入文件里的默认参数");
+});
+
+$("btn-reset").addEventListener("click", () => {
+  PROPS = structuredClone(SAVED);
+  onChanged();
+  toast("已恢复为上次保存的参数");
+});
+
+// ===========================================================================
+// 启动
+// ⚠ 首屏必须显式布局一次：真实浏览器打开时窗口已是最终尺寸，**永远不会有 resize 事件**，
+//   只靠 window.resize 会让预览停在初始尺寸（本项目踩过的坑）。
+// ⚠ 初始帧不能停在 0：第 0 帧正好是「开场淡入」的 opacity=0，预览会是一片黑，
+//   看起来像坏了。默认落在 15% 处 —— 淡入已完成，轨迹与剖面都有内容可调。
+// ===========================================================================
+DUR = trailDurationInFrames(PROPS, DEFAULTS, FPS);
+frame = Math.max(0, Math.min(DUR - 1, Math.round(DUR * 0.15)));
+
+window.addEventListener("resize", fitStage);
+if (window.ResizeObserver) new ResizeObserver(fitStage).observe($("stageouter"));
+fitStage();
+onChanged();
+requestAnimationFrame(tick);
+requestAnimationFrame(() => requestAnimationFrame(fitStage));
+setTimeout(fitStage, 1200);
+
+// ---------------------------------------------------------------------------
+// 自动化验证 / 控制台调试出口。
+// 为什么需要：ES 模块里的 PROPS / frame 在模块作用域，外部（CDP 断言脚本、
+// 浏览器控制台）读不到，「点了添加按钮到底写进了什么」就没法客观核对。
+// 这里只暴露引用与两个最常用的动作，不改变任何渲染行为。
+// ---------------------------------------------------------------------------
+window.__trail = {
+  PROPS, DEFAULTS, GEO,
+  render, onChanged,
+  get frame() { return frame; },
+  get DUR() { return DUR; },
+  setFrame(f) { frame = Math.max(0, Math.min(DUR - 1, Math.round(f))); render(); },
+  waypoints() {
+    try { return JSON.parse(PROPS["轨迹"]["自定义途经点"] || "[]"); } catch { return null; }
+  },
+  // ---- 画布交互的客观验证出口（CDP 脚本据此模拟「按在标记上拖动」）----
+  get scene() { return lastScene; },
+  marks() { return lastScene ? lastScene.map.marks.list : []; },
+  /** 里程 → 舞台坐标（1920×1080 坐标系），用于算「该点的标记在哪」 */
+  stagePointOf(distM) {
+    if (!lastScene) return null;
+    const p = sampleAt(GEO, distM);
+    const { gx, gy, k } = lastScene.map;
+    return { x: gx + p.x * k, y: gy + p.y * k };
+  },
+  distMAtStage,
+  hitIndexAt(x, y) { return hitMark({ x, y }); },
+  addWaypointAt(distM) { addWaypointAt(distM); },
+  /** 直接改某个途经点的若干字段（验证逐点样式是否真的生效） */
+  setStyle(i, patch) {
+    if (!wpArr[i]) return null;
+    Object.assign(wpArr[i], patch);
+    wpCommit();
+    if (wpEl) wpRender(wpEl);
+    return wpArr[i];
+  },
+  /** 舞台缩放系数（客户端坐标 ↔ 舞台坐标的换算） */
+  stageScale() {
+    const r = stage.getBoundingClientRect();
+    return { scale: r.width > 0 ? W / r.width : 1, rect: { left: r.left, top: r.top, width: r.width } };
+  },
+};
+</script>
+</body>
+</html>

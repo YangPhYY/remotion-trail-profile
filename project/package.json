@@ -1,0 +1,29 @@
+{
+  "name": "remotion-trail-profile",
+  "version": "1.0.0",
+  "private": true,
+  "description": "把 GPS 轨迹（KML/GPX）做成「轨迹生长 + 海拔剖面同步推进」的 Remotion 动画，附浏览器调参台",
+  "scripts": {
+    "demo": "node examples/make-demo-kml.mjs && node scripts/build-trail-profile.mjs examples/demo-loop.kml --step=10 --no-verify",
+    "build-track": "node scripts/build-trail-profile.mjs",
+    "studio-trail": "node scripts/trail-studio-server.mjs",
+    "studio": "remotion studio src/index.tsx",
+    "still-trail": "remotion still src/index.tsx TrailProfile out/trail-still.png",
+    "render-trail": "remotion render src/index.tsx TrailProfile out/trail-profile.mp4",
+    "render-trail-alpha": "remotion render src/index.tsx TrailProfile out/trail-profile-alpha.mov --codec=prores --prores-profile=4444 --pixel-format=yuva444p10le --image-format=png --props=out/trail-props-alpha.json",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.280",
+    "@remotion/zod-types": "4.0.280",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.280",
+    "zod": "3.22.3"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "typescript": "^5.4.0"
+  }
+}
