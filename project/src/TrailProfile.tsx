@@ -205,7 +205,7 @@ export const TrailProfile: React.FC<TrailProfileProps> = (props) => {
                 <text
                   x={mk.label.x}
                   y={mk.label.y}
-                  textAnchor={mk.label.anchor}
+                  textAnchor={mk.label.anchor as "start" | "middle" | "end"}
                   fontSize={mk.label.fontSize}
                   fontWeight={mk.label.weight}
                   fill={mk.label.fill}
