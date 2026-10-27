@@ -10,7 +10,7 @@
     "studio": "remotion studio src/index.tsx",
     "still-trail": "remotion still src/index.tsx TrailProfile out/trail-still.png",
     "render-trail": "remotion render src/index.tsx TrailProfile out/trail-profile.mp4",
-    "render-trail-alpha": "remotion render src/index.tsx TrailProfile out/trail-profile-alpha.mov --codec=prores --prores-profile=4444 --pixel-format=yuva444p10le --image-format=png --props=out/trail-props-alpha.json",
+    "render-trail-alpha": "remotion render src/index.tsx TrailProfile out/trail-profile-alpha.mov --codec=prores --prores-profile=4444 --pixel-format=yuva444p10le --image-format=png",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

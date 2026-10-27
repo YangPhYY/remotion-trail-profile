@@ -21,15 +21,16 @@
 前置：**Node 18+**（推荐 22）。
 
 ```bash
-git clone <这个仓库的地址> trail-profile
-cd trail-profile/project
+# 下载本仓库（clone 或 Download ZIP 都行），然后：
+cd project
 
 # ① 装依赖（Remotion 本体，约 3~5 分钟）
 npm install
 
-# ② 生成一条虚构示例轨迹，跑通整条流水线
-#    输出 src/trail-profile-data.json，并在浏览器打开调参台
+# ② 生成一条虚构示例轨迹，跑通整条流水线 → src/trail-profile-data.json
 npm run demo
+
+# ③ 打开调参台看效果
 npm run studio-trail        # → http://localhost:5232/trail-studio.html
 ```
 
@@ -39,8 +40,10 @@ npm run studio-trail        # → http://localhost:5232/trail-studio.html
 
 ```bash
 npm run render-trail-alpha   # → out/trail-profile-alpha.mov（ProRes 4444，带 alpha）
-npm run render-trail         # → out/trail-profile.mp4（不透明，预览用）
+npm run render-trail         # → out/trail-profile.mp4（预览用；mp4 不存 alpha，透明区会变黑底）
 ```
+
+> 出片读的是 `src/trail-profile-defaults.json`（示例里「透明背景」已开）。想临时改参数又不想动 defaults，就把它复制成 `out/my-props.json`，再在命令后加 `--props=out/my-props.json`。注意 `--props` 是**浅合并**：只传一个子组，其余子组会被整组替换，所以必须传完整 defaults。
 
 > 只需要调参台、不想出片时，**不用 `npm install`** —— 调参台只依赖 Node 内置模块和三个本地 `.mjs`，零第三方包。
 
