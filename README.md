@@ -21,8 +21,9 @@
 前置：**Node 18+**（推荐 22）。
 
 ```bash
-# 下载本仓库（clone 或 Download ZIP 都行），然后：
-cd project
+# 下载仓库（Download ZIP 也行）
+git clone https://github.com/YangPhYY/remotion-trail-profile.git
+cd remotion-trail-profile/project
 
 # ① 装依赖（Remotion 本体，约 3~5 分钟）
 npm install
