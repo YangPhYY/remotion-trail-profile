@@ -25,7 +25,7 @@
 git clone https://github.com/YangPhYY/remotion-trail-profile.git
 cd remotion-trail-profile/project
 
-# ① 装依赖（Remotion 本体，约 3~5 分钟）
+# ① 装依赖（Remotion 本体，实测 2~3 分钟 / 192 个包）
 npm install
 
 # ② 解析示例轨迹（嵩山「少太连穿」31.8 km）→ src/trail-profile-data.json
@@ -38,14 +38,23 @@ npm run demo
 npm run studio-trail        # → http://localhost:5232/trail-studio.html
 ```
 
-调参台打开后就能看到环形轨迹和海拔剖面。改完参数点右上角「保存到文件」，写回 `src/trail-profile-defaults.json`。
+调参台打开后就能看到这条连穿轨迹、海拔剖面和实时预览。改完参数点右上角「保存到文件」，写回 `src/trail-profile-defaults.json`。
 
 出片：
 
 ```bash
+npm run still-trail          # 先渲一张静帧确认效果（几秒，别直接出整片）
 npm run render-trail-alpha   # → out/trail-profile-alpha.mov（ProRes 4444，带 alpha）
 npm run render-trail         # → out/trail-profile.mp4（预览用；mp4 不存 alpha，透明区会变黑底）
 ```
+
+> **首次出片会自动下载 Chrome Headless Shell（约 102 MB）**，实测 1~3 分钟，网慢时更久，期间看起来像卡住；它装在 `node_modules/.remotion/` 里，删掉 `node_modules` 就要重下。想直接跳过，把本机已有的浏览器指过去：
+>
+> ```bash
+> npm run render-trail-alpha -- --browser-executable "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"
+> ```
+>
+> **耗时参考**（1920×1080 / 1395 帧 / 本机实测）：默认**光晕关闭**约 **40 分钟**（1.6 秒/帧）；打开「轨迹 › 显示光晕」约 **2.5 小时**（6.4 秒/帧，慢 4 倍）。想更快就调小「动画节奏 › 时长秒」，或加 `--concurrency=4`。
 
 > 出片读的是 `src/trail-profile-defaults.json`（示例里「透明背景」已开）。想临时改参数又不想动 defaults，就把它复制成 `out/my-props.json`，再在命令后加 `--props=out/my-props.json`。注意 `--props` 是**浅合并**：只传一个子组，其余子组会被整组替换，所以必须传完整 defaults。
 
