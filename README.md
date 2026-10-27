@@ -4,7 +4,7 @@
 
 ![预览](docs/preview.png)
 
-> 上图是 `npm run demo` 生成的虚构示例（7.2 km 环线），深色底只是为了让白线看得清；实际输出是透明底。
+> 上图是 `npm run demo` 解析真实轨迹「少太连穿」（嵩山少室山—太室山连穿，31.8 km · 爬升 1801 m）的实拍帧，深色底只是为了让白线看得清；实际输出是透明底。
 
 附一个**浏览器调参台**：拖滑块改样式、拖动加点改途经点、实时预览，点一下写回配置。
 
@@ -28,8 +28,11 @@ cd remotion-trail-profile/project
 # ① 装依赖（Remotion 本体，约 3~5 分钟）
 npm install
 
-# ② 生成一条虚构示例轨迹，跑通整条流水线 → src/trail-profile-data.json
+# ② 解析示例轨迹（嵩山「少太连穿」31.8 km）→ src/trail-profile-data.json
 npm run demo
+
+#    想用自己的轨迹：把 KML 放到任意位置，然后
+#    npm run build-track -- "路径/你的轨迹.kml" --step=10
 
 # ③ 打开调参台看效果
 npm run studio-trail        # → http://localhost:5232/trail-studio.html
@@ -158,8 +161,9 @@ cp -r skills/remotion-trail-profile ~/.workbuddy/skills/
     ├── tsconfig.json
     ├── trail-studio.html          # 调参台（单文件，ES module）
     ├── examples/
-    │   ├── make-demo-kml.mjs      # 生成虚构示例轨迹
-    │   └── demo-loop.kml
+    │   ├── shaotai-lianchuan.kml  # 真实示例：嵩山少太连穿（31.8 km）
+    │   ├── make-demo-kml.mjs      # 生成虚构轨迹（npm run demo:synthetic）
+    │   └── demo-loop.kml          # 虚构环线（7.2 km，不含任何真实坐标）
     ├── scripts/
     │   ├── build-trail-profile.mjs    # KML/GPX → 等里程重采样 → data.json
     │   └── trail-studio-server.mjs    # 调参台本地服务（5232）
@@ -195,9 +199,11 @@ cp -r skills/remotion-trail-profile ~/.workbuddy/skills/
 
 ## 七、合规与免责
 
-- 本仓库**不含任何地图瓦片、底图截图或他人轨迹数据**。示例 `examples/demo-loop.kml` 是脚本生成的**虚构坐标**，不对应任何真实地点。
+- 本仓库**不含任何地图瓦片或底图截图**。
+- 示例轨迹 `examples/shaotai-lianchuan.kml` 取自「两步路」公开轨迹（上传者 **破浪绍兴**，2025-05-30），仅作功能演示，版权归原作者；原作者若不愿被引用，提 issue 即可删除。
+- `examples/demo-loop.kml` 是脚本生成的**虚构坐标**，不对应任何真实地点。
 - 高德地图服务受[高德开放平台服务条款](https://lbs.amap.com/home/terms)约束。key 配额、调用量、底图数据的使用与分发限制由你自己承担；**不要把抓取到的瓦片或拼接底图提交到本仓库或任何公开位置**。
-- 请勿提交真实 GPS 轨迹前先评估：轨迹起点/终点往往就是你的住址或停车点。
+- 用**自己的**轨迹发公开仓库前先评估：轨迹起点/终点往往就是你的住址或停车点。
 - 提交前请跑 `node scripts/check-secrets.mjs`。可以挂成 git 钩子：
 
 ```bash

@@ -21,6 +21,7 @@ public/
 # ---- 我的真实轨迹（只保留 examples/ 下的虚构示例） ----
 examples/*.kml
 !examples/demo-loop.kml
+!examples/shaotai-lianchuan.kml
 
 # ---- 系统垃圾 ----
 .DS_Store

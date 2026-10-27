@@ -4,7 +4,8 @@
   "private": true,
   "description": "把 GPS 轨迹（KML/GPX）做成「轨迹生长 + 海拔剖面同步推进」的 Remotion 动画，附浏览器调参台",
   "scripts": {
-    "demo": "node examples/make-demo-kml.mjs && node scripts/build-trail-profile.mjs examples/demo-loop.kml --step=10 --no-verify",
+    "demo": "node scripts/build-trail-profile.mjs examples/shaotai-lianchuan.kml --step=10",
+    "demo:synthetic": "node examples/make-demo-kml.mjs && node scripts/build-trail-profile.mjs examples/demo-loop.kml --step=10 --no-verify",
     "build-track": "node scripts/build-trail-profile.mjs",
     "studio-trail": "node scripts/trail-studio-server.mjs",
     "studio": "remotion studio src/index.tsx",
