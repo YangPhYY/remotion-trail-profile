@@ -108,6 +108,12 @@
   .wp-empty { font-size: 11px; color: var(--muted); padding: 2px 0 6px; line-height: 1.5; }
   .wp-bad { font-size: 11px; color: #ff8f8f; line-height: 1.5; }
   .wp-bad textarea { width: 100%; height: 62px; margin-top: 5px; background: #0b131d; color: var(--text); border: 1px solid #6b2b2b; border-radius: 4px; padding: 4px 6px; font-size: 11px; font-family: Consolas, monospace; }
+  /* 路型分段编辑器：一行 = 起 / 止 / 路型 / 里程提示 / 删除 */
+  .rd-row { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
+  .rd-row input[type=text] { flex: 1; min-width: 0; background: #0b131d; color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 2px 5px; font-size: 11px; }
+  .rd-row select { flex: none; width: 74px; background: #0b131d; color: var(--text); border: 1px solid var(--line); border-left-width: 3px; border-radius: 4px; padding: 2px 3px; font-size: 11px; }
+  .rd-row .rd-info { flex: none; width: 74px; font-size: 10px; color: var(--muted); font-family: Consolas, monospace; text-align: right; }
+  .rd-row button { flex: none; width: 20px; padding: 1px 0; font-size: 12px; line-height: 1; }
   /* 画布交互层：拖动标记改位置 / 点空白处加点 */
   #hit { position: absolute; inset: 0; z-index: 6; cursor: crosshair; touch-action: none; }
   #hit.near { cursor: grab; }
@@ -224,6 +230,11 @@
       </label>
       <label style="font-size:12px;color:#e8f1f8;display:flex;align-items:center;gap:5px;white-space:nowrap;
                     padding:3px 9px;border:1px solid #2a3d4e;border-radius:6px;background:#121d27"
+             title="按里程把轨迹画成不同路面（= 参数「路型 · 显示路型」）。关掉后回到单色细线；分段为空时开关不会有视觉变化。">
+        <input type="checkbox" id="chk-road" checked style="accent-color:#35d6c8"> 路型
+      </label>
+      <label style="font-size:12px;color:#e8f1f8;display:flex;align-items:center;gap:5px;white-space:nowrap;
+                    padding:3px 9px;border:1px solid #2a3d4e;border-radius:6px;background:#121d27"
              title="显示 / 隐藏下方海拔剖面（= 参数「海拔剖面 · 显示海拔图」）。关掉后地图区自动撑满全屏高度。">
         <input type="checkbox" id="chk-profile" checked style="accent-color:#35d6c8"> 海拔图
       </label>
@@ -241,8 +252,13 @@ import {
   nearestDistOnTrack,
   WP_SHAPES,
   WP_LABEL_POS,
+  ROAD_KEYS,
+  ROAD_TYPES,
 } from "./src/trail-scene.mjs";
 import { PARAM_GROUPS, clampPropsToSpec } from "./src/trail-params.mjs";
+
+/** 路型 → 代表色（编辑器里给下拉框描边，一眼看出这段是什么路） */
+const ROAD_TYPE_COLOR = Object.fromEntries(ROAD_TYPES.map((t) => [t.key, t.done]));
 
 // ---------------------------------------------------------------------------
 // 预览原理
@@ -666,8 +682,163 @@ function wpRender(el) {
   el.appendChild(addBar);
 }
 
-function buildWaypointEditor(box, g, it) {
+// ---------------------------------------------------------------------------
+// 路型分段编辑器（ui: "roads"）
+//
+// 每行 = { 起, 止, 路型 }。起止接受「途经点名称」或「里程 km」——
+// 与 buildTrailScene 里的 parseRoadCuts 是同一套解析规则，所以这里显示的
+// 里程区间就是场景模型实际会切的区间（唯一差别：这里不处理覆盖，只提示）。
+// ---------------------------------------------------------------------------
+let roadArr = [];
+
+function roadNames() {
+  const out = ["起点", "终点"];
+  try {
+    const arr = JSON.parse(PROPS["轨迹"]["自定义途经点"] || "[]");
+    for (const w of arr) if (w && w["名称"]) out.push(String(w["名称"]).trim());
+  } catch {
+    /* 途经点 JSON 坏了不影响路型编辑 */
+  }
+  return out;
+}
+
+/** 把「点名 / km / 起点 / 终点」解析成 km；解析不出返回 null */
+function roadKmOf(v) {
+  const s = String(v ?? "").trim();
+  if (!s) return null;
+  if (s === "起点" || s === "开始") return 0;
+  if (s === "终点" || s === "结束") return GEO.totalM / 1000;
+  if (/^-?\d+(\.\d+)?$/.test(s)) return Number(s);
+  try {
+    const arr = JSON.parse(PROPS["轨迹"]["自定义途经点"] || "[]");
+    const w = arr.find((x) => x && String(x["名称"] ?? "").trim() === s);
+    const km = Number(w?.["里程km"]);
+    return Number.isFinite(km) ? km : null;
+  } catch {
+    return null;
+  }
+}
+
+function roadCommit() {
+  PROPS["路型"]["路型分段"] = JSON.stringify(roadArr);
+  onChanged();
+}
+
+function roadRender(el) {
+  el.innerHTML = "";
+  const names = roadNames();
+  const dlId = "rd-names";
+  el.insertAdjacentHTML(
+    "beforeend",
+    `<datalist id="${dlId}">${names.map((n) => `<option value="${esc(n)}"></option>`).join("")}</datalist>`
+  );
+
+  roadArr.forEach((seg, i) => {
+    const row = document.createElement("div");
+    row.className = "rd-row";
+
+    const mk = (key, ph) => {
+      const inp = document.createElement("input");
+      inp.type = "text";
+      inp.value = seg[key] ?? "";
+      inp.placeholder = ph;
+      inp.setAttribute("list", dlId);
+      inp.addEventListener("change", () => {
+        seg[key] = inp.value.trim();
+        roadCommit();
+        roadRender(el);
+      });
+      return inp;
+    };
+
+    const sel = document.createElement("select");
+    for (const t of ROAD_KEYS) {
+      const o = document.createElement("option");
+      o.value = t;
+      o.textContent = t;
+      sel.appendChild(o);
+    }
+    sel.value = seg["路型"] ?? "无";
+    if (ROAD_TYPE_COLOR[sel.value]) sel.style.borderColor = ROAD_TYPE_COLOR[sel.value];
+    sel.addEventListener("change", () => {
+      seg["路型"] = sel.value;
+      roadCommit();
+      roadRender(el);
+    });
+
+    const del = document.createElement("button");
+    del.textContent = "×";
+    del.title = "删除这一段";
+    del.addEventListener("click", () => {
+      roadArr.splice(i, 1);
+      roadCommit();
+      roadRender(el);
+    });
+
+    const a = roadKmOf(seg["起"]);
+    const b = roadKmOf(seg["止"]);
+    const info = document.createElement("span");
+    info.className = "rd-info";
+    if (a === null || b === null) {
+      info.textContent = "⚠ 找不到这个点";
+      info.style.color = "#e2564a";
+    } else {
+      info.textContent = `${Math.min(a, b).toFixed(2)}–${Math.max(a, b).toFixed(2)} km`;
+    }
+
+    row.append(mk("起", "起：点名 / km"), mk("止", "止：点名 / km"), sel, info, del);
+    el.appendChild(row);
+  });
+
+  const bar = document.createElement("div");
+  bar.className = "wp-add";
+  const add = document.createElement("button");
+  add.textContent = "＋ 添加分段";
+  add.addEventListener("click", () => {
+    const last = roadArr[roadArr.length - 1];
+    roadArr.push({ 起: last ? last["止"] ?? 0 : 0, 止: "终点", 路型: "土路" });
+    roadCommit();
+    roadRender(el);
+  });
+  bar.appendChild(add);
+  el.appendChild(bar);
+
+  if (!roadArr.length) {
+    const tip = document.createElement("div");
+    tip.className = "ghint";
+    tip.textContent = "还没有分段。点「＋ 添加分段」开始，起止可以填途经点名称或里程（如 0.45）。";
+    el.appendChild(tip);
+  }
+}
+
+function buildRoadEditor(box, g, it) {
   const el = document.createElement("div");
+  el.className = "wp rd";
+  box.appendChild(el);
+
+  const sync = (raw) => {
+    let arr;
+    try {
+      arr = JSON.parse(raw || "[]");
+    } catch {
+      arr = null;
+    }
+    if (!Array.isArray(arr)) {
+      el.innerHTML = `<div class="wp-bad">⚠ 「路型分段」不是合法 JSON 数组，已保留原文。修好后自动恢复编辑。</div>`;
+      el.dataset.ready = "0";
+      return;
+    }
+    if (el.dataset.ready === "1" && JSON.stringify(arr) === JSON.stringify(roadArr)) return;
+    el.dataset.ready = "1";
+    roadArr = arr;
+    roadRender(el);
+  };
+
+  controls.push({ group: g.group, key: it.key, primary: el, set: sync });
+  sync(PROPS[g.group][it.key]);
+}
+
+function buildWaypointEditor(box, g, it) {  const el = document.createElement("div");
   el.className = "wp";
   box.appendChild(el);
   wpEl = el;
@@ -696,7 +867,7 @@ function buildWaypointEditor(box, g, it) {
 for (const g of PARAM_GROUPS) {
   const box = document.createElement("details");
   box.className = "grp";
-  box.open = ["地图", "轨迹", "海拔剖面", "动画节奏"].includes(g.group);
+  box.open = ["地图", "轨迹", "路型", "海拔剖面", "动画节奏"].includes(g.group);
   const sum = document.createElement("summary");
   sum.textContent = g.group;
   box.appendChild(sum);
@@ -711,6 +882,11 @@ for (const g of PARAM_GROUPS) {
     // 「自定义途经点」不是标量参数，交给专用编辑器（列表式增删改）
     if (it.ui === "waypoints") {
       buildWaypointEditor(box, g, it);
+      continue;
+    }
+    // 「路型分段」同理：独立的分段编辑器
+    if (it.ui === "roads") {
+      buildRoadEditor(box, g, it);
       continue;
     }
     const row = document.createElement("div");
@@ -783,6 +959,15 @@ for (const g of PARAM_GROUPS) {
 
 // 顶部快捷开关「海拔图」/「轨迹」—— 与参数表里的同名项是**同一个键**的第二个入口，
 // 不复制状态：两边任一改动都写 PROPS[...]，再由 syncControls() 双向回填。
+{
+  // 顶部快捷开关「路型」：与参数组里的「显示路型」是同一个键，双向回填
+  const cb = $("chk-road");
+  cb.addEventListener("change", () => {
+    PROPS["路型"]["显示路型"] = cb.checked;
+    onChanged();
+  });
+  controls.push({ group: "路型", key: "显示路型", primary: cb, set: (v) => { cb.checked = !!v; } });
+}
 {
   const cb = $("chk-profile");
   cb.addEventListener("change", () => {
@@ -873,6 +1058,8 @@ let lastScene = null; // 最近一帧的场景对象（画布交互要用相机 
 // ---------------------------------------------------------------------------
 let trackKey = "";
 let trackDyn = { glow: null, done: null };
+// 路型模式的 DOM 引用：bands 层（重建频率低）/ deco 层（按进度分桶）/ 已走 path（每帧改 dash）
+let roadRefs = { bandKey: "", done: [], deco: null, decoKey: "" };
 function syncTrack(m) {
   // 「轨迹 · 显示轨迹」关掉 → 整层清空并让 key 失效，重新打开时必然重建 DOM。
   // 不能只把 opacity 设 0：path 的 d 有 50 KB，留着只是白占内存与重绘。
@@ -881,9 +1068,86 @@ function syncTrack(m) {
       mapTrack.innerHTML = "";
       trackKey = "";
       trackDyn = { glow: null, done: null };
+      roadRefs = { bandKey: "", done: [], deco: null, decoKey: "" };
     }
     return;
   }
+
+  // ★ 路型模式：分段路面带 + 材质图元。
+  //   材质依赖 distM（只画已走部分），所以每帧整层重建。字符串拼接一次 innerHTML，
+  //   比逐元素 createElement 快一个数量级；段数 ≤ 十几，d 也不长（每段几十个点）。
+  if (m.road) {
+    // ★ 从单线切回路型时必须先清空并重置缓存 key。
+    //   否则 roadRefs.bandKey 还留着上次的值 → bandKey 判定「没变」→ 不重建，
+    //   画面上就一直是那 3 条单线 path（典型症状：关掉再打开，路型回不来）。
+    if (trackKey !== "road") {
+      mapTrack.innerHTML = "";
+      roadRefs = { bandKey: "", done: [], deco: null, decoKey: "" };
+      trackKey = "road";
+    }
+
+    // ★ 三层拆开，各按自己的变化频率更新：
+    //   ① 路面带（casing/base）只在段结构或相机变化时重建；
+    //   ② 已走裁剪（stroke-dasharray）每帧只写属性 —— 这是「生长」的唯一动态；
+    //   ③ 材质图元按 0.5% 进度分桶重建（图元集合随里程增长，但没必要每帧重排）。
+    //   不这么拆，60fps 播放时每帧重建近 200 个 SVG 节点会明显掉帧。
+    const bandKey = m.road.segments.map((s) => s.key).join("|") + `|${m.gx}|${m.gy}|${m.k}`;
+    if (bandKey !== roadRefs.bandKey) {
+      const bands = [];
+      for (const seg of m.road.segments) {
+        const casing = seg.casing
+          ? `<path d="${seg.d}" fill="none" stroke="${seg.casing}" stroke-width="${seg.casingW}" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>`
+          : "";
+        const base = `<path d="${seg.d}" fill="none" stroke="${seg.base}" stroke-width="${seg.bandW}" stroke-linecap="round" stroke-linejoin="round" opacity="${seg.baseAlpha ?? 0.4}"/>`;
+        const done = `<path d="${seg.d}" fill="none" stroke="${seg.done}" stroke-width="${seg.bandW}" stroke-linecap="round" stroke-linejoin="round" pathLength="1" stroke-dasharray="0 1"/>`;
+        bands.push(`<g>${casing}${base}${done}</g>`);
+      }
+      mapTrack.innerHTML =
+        `<g class="rd-bands" transform="translate(${m.gx.toFixed(3)} ${m.gy.toFixed(3)}) scale(${m.k})">${bands.join("")}</g>` +
+        `<g class="rd-deco"></g>`;
+      roadRefs.bandKey = bandKey;
+      roadRefs.done = [...mapTrack.querySelectorAll(".rd-bands g > path:last-child")];
+      roadRefs.deco = mapTrack.querySelector(".rd-deco");
+      roadRefs.decoKey = "";
+    }
+    m.road.segments.forEach((seg, i) => {
+      const el = roadRefs.done[i];
+      if (el) el.setAttribute("stroke-dasharray", `${(seg.p / 100).toFixed(4)} 1`);
+    });
+
+    // 材质全段生成后，只有「段从没走到走到」这一件事会改变它的外观 → 用 decorAlpha 做 key，
+    //   播放时基本只重建一次，不再每帧重排。
+    const decoKey = m.road.segments.map((s) => `${s.key}:${s.decorAlpha ?? 1}`).join("|");
+    if (decoKey !== roadRefs.decoKey && roadRefs.deco) {
+      const overs = [];
+      for (const seg of m.road.segments) {
+        let decor = "";
+        for (const d of seg.decor) {
+          decor +=
+            d.t === "c"
+              ? `<circle cx="${d.cx.toFixed(2)}" cy="${d.cy.toFixed(2)}" r="${d.r.toFixed(2)}" fill="${d.f}" opacity="${d.o ?? 1}"/>`
+              : `<line x1="${d.x1.toFixed(2)}" y1="${d.y1.toFixed(2)}" x2="${d.x2.toFixed(2)}" y2="${d.y2.toFixed(2)}" stroke="${d.c}" stroke-width="${d.w}" stroke-linecap="round"/>`;
+        }
+        const badge = seg.badge
+          ? `<text x="${seg.badge.x.toFixed(2)}" y="${seg.badge.y.toFixed(2)}" text-anchor="${seg.badge.anchor ?? "middle"}" font-size="${seg.badge.fontSize}" font-weight="600" fill="${seg.badge.color}" stroke="${seg.badge.haloColor}" stroke-width="${seg.badge.haloWidth.toFixed(2)}" paint-order="stroke" opacity="${seg.badge.opacity.toFixed(3)}">${esc(seg.badge.text)}</text>`
+          : "";
+        if (decor || badge) overs.push(`<g opacity="${seg.decorAlpha ?? 1}">${decor}${badge}</g>`);
+      }
+      roadRefs.deco.innerHTML = overs.join("");
+      roadRefs.decoKey = decoKey;
+    }
+
+    trackKey = "road";
+    trackDyn = { glow: null, done: null };
+    return;
+  }
+
+  if (trackKey === "road") {
+    // 从路型模式切回单线：旧 DOM 是多段结构，key 已失效，清掉重建
+    mapTrack.innerHTML = "";
+    trackKey = "";
+  }
+
   const key = [
     m.showTrack,
     m.gx, m.gy, m.k,
@@ -1064,6 +1328,15 @@ function render() {
     }
     if (pr.readout) {
       q.push(`<text x="${pr.readout.x}" y="${pr.readout.y}" text-anchor="middle" font-size="${pr.readout.fontSize}" font-weight="700" fill="${pr.readout.color}" stroke="rgba(0,0,0,0.55)" stroke-width="${(pr.readout.fontSize * 0.14).toFixed(2)}" paint-order="stroke" letter-spacing="1">${esc(pr.readout.text)}</text>`);
+    }
+    // 游标坡度读数 + 段坡度标注（与 Remotion 组件同一份数据）
+    if (pr.slopeReadout) {
+      const rx = pr.readout ? pr.readout.x : pr.cursorX;
+      const ry = pr.slopeReadout.y;
+      q.push(`<text x="${rx}" y="${ry.toFixed(2)}" text-anchor="middle" font-size="${pr.slopeReadout.fontSize}" font-weight="600" fill="${pr.slopeReadout.color}" fill-opacity="0.82" stroke="rgba(0,0,0,0.5)" stroke-width="${(pr.slopeReadout.fontSize * 0.16).toFixed(2)}" paint-order="stroke">${esc(pr.slopeReadout.text)}</text>`);
+    }
+    for (const sl of pr.slopeMarks ?? []) {
+      q.push(`<text x="${sl.x.toFixed(2)}" y="${sl.y.toFixed(2)}" text-anchor="middle" font-size="${sl.fontSize}" font-weight="600" fill="${sl.color}" fill-opacity="0.9" stroke="rgba(0,0,0,0.5)" stroke-width="${(sl.fontSize * 0.14).toFixed(2)}" paint-order="stroke" letter-spacing="0.5">${esc(sl.text)}</text>`);
     }
     profRest.innerHTML = q.join("");
   } else {

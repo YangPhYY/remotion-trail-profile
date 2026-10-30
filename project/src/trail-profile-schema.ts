@@ -85,7 +85,23 @@ export const trailProfileSchema = z.object({
       ),
   }),
 
-  // ③ 海拔剖面
+  // ③ 路型（路面类型）
+  "路型": z.object({
+    "显示路型": z.boolean().describe("按里程把轨迹画成不同路面（路面带 + 材质）。关掉 = 回到原来的单色线"),
+    "路型分段": z
+      .string()
+      .describe('JSON 数组：[{"起":"途经点名或里程km","止":"...","路型":"机耕路"}]。区间重叠时后定义覆盖先定义'),
+    "路型带宽倍数": z.number().step(0.1).min(1).max(6).describe("路面带宽度 = 线宽 × 该倍数"),
+    "路型色相强度": z.number().step(0.02).min(0).max(1).describe("0 = 全部用轨迹主色（只靠宽度与材质区分），1 = 每种路型满色"),
+    "纹理密度": z.number().step(0.05).min(0.2).max(3).describe("材质图元间距的倒数：越大越密（碎石/胎印/台阶横杠）"),
+    "段首徽标": z.boolean().describe("显示路型名（位置/字号/颜色见下面三项）"),
+    "徽标位置": z.enum(["自动", "上", "下", "左", "右"]).describe("自动 = 沿法向左右交替；其余为屏幕绝对方向"),
+    "徽标偏移": z.number().step(2).min(-120).max(200).describe("在基准位置上的额外推远/拉近（px，可负）"),
+    "徽标字号": z.number().step(1).min(10).max(40),
+    "徽标颜色": zColor(),
+  }),
+
+  // ④ 海拔剖面
   "海拔剖面": z.object({
     "剖面模式": z
       .enum(TRAIL_PROFILE_MODES)
@@ -103,6 +119,11 @@ export const trailProfileSchema = z.object({
     "填充不透明度": z.number().step(0.02).min(0).max(1).describe("曲线下方的渐变面积"),
     "未走不透明度": z.number().step(0.02).min(0).max(1),
     "内衬不透明度": z.number().step(0.02).min(0).max(1).describe("绘图区底衬黑幕，保证曲线在底图上可读"),
+    "剖面坡度标注": z.boolean().describe("在各路型段中点标真实坡度角（整段高差/里程，只标超过下限的段）"),
+    "坡度标注下限": z.number().step(1).min(0).max(60).describe("低于该角度不标（度）"),
+    "坡度标注字号": z.number().step(1).min(10).max(60),
+    "坡度标注上移": z.number().step(2).min(-60).max(300).describe("相对曲线的高度偏移（px），负数会压到曲线上"),
+    "坡度标注颜色": zColor(),
   }),
 
   // ④ 剖面游标与读数
@@ -112,6 +133,10 @@ export const trailProfileSchema = z.object({
     "线宽": z.number().step(0.5).min(1).max(12),
     "点半径": z.number().step(0.5).min(0).max(24),
     "读数显示": z.boolean(),
+    "坡度读数": z.boolean().describe("游标下方显示当前路型段的坡度角"),
+    "坡度读数字号": z.number().step(1).min(8).max(60),
+    "坡度读数上移": z.number().step(2).min(-40).max(200).describe("相对海拔读数的纵向偏移（px）"),
+    "坡度读数颜色": zColor(),
     "读数字号": z.number().step(1).min(16).max(140).describe("游标上方的实时海拔数字（参考图里的「39 m」）"),
     "读数颜色": zColor(),
     "读数上移": z.number().step(2).min(0).max(300).describe("读数整体相对绘图区顶边上移的像素"),

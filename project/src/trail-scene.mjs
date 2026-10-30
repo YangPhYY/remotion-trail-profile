@@ -38,6 +38,24 @@ const num = (v, fallback) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
+/** #RRGGBB 混色（路型色相强度 = 0 时退回轨迹主色，只看形状不看色） */
+const mixHex = (a, b, t) => {
+  const pa = /^#([0-9a-f]{6})$/i.exec(a ?? "");
+  const pb = /^#([0-9a-f]{6})$/i.exec(b ?? "");
+  if (!pa || !pb) return a;
+  const f = clamp(t, 0, 1);
+  const ca = parseInt(pa[1], 16);
+  const cb = parseInt(pb[1], 16);
+  const ch = (sh) => {
+    const va = (ca >> sh) & 255;
+    const vb = (cb >> sh) & 255;
+    return Math.round(va + (vb - va) * f)
+      .toString(16)
+      .padStart(2, "0");
+  };
+  return `#${ch(16)}${ch(8)}${ch(0)}`;
+};
+
 const SANS = "'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif";
 const MONO = "Consolas, 'SF Mono', Menlo, monospace";
 
@@ -61,6 +79,271 @@ function trackPathOf(geo) {
   for (let i = 0; i < geo.mx.length; i++) d += `${i ? "L" : "M"}${geo.mx[i].toFixed(9)} ${geo.my[i].toFixed(9)}`;
   trackPathCache = { geo, d };
   return d;
+}
+
+// ---------------------------------------------------------------------------
+// 路型（路面类型）
+//
+// ★ 为什么不用「细线纹理」而是「有宽度的路面带」：
+//   6px 的线上做 dash 纹理只能读出「虚实」，读不出「这是什么路」。
+//   路面带把宽度、材质、色相三件事同时用上，1080p 一眼能分辨。
+//
+// ★ 材质**不是图片**，全部是确定性图元（圆/线），沿路径按弧长采样后输出：
+//   ① 台阶横杠、胎印人字必须逐点算法向 —— pattern 平铺会随路径拐弯而歪。
+//   ② 图元坐标在「用户坐标（墨卡托归一化）」里，尺寸统一乘 invK，
+//      渲染方整组 scale(k) 后视觉尺寸正好等于设定的像素值。
+// ---------------------------------------------------------------------------
+
+/** 内置路型表。顺序即调参台下拉框顺序；wide = 相对带宽的倍率 */
+export const ROAD_TYPES = [
+  { key: "机耕路", wide: 1.15, casing: "#2E2116", base: "#A87E52", done: "#C9A170", decor: "tire" },
+  { key: "土路", wide: 1.0, casing: "#3A2A1C", base: "#C7A87D", done: "#E0C69C", decor: "dirt" },
+  { key: "步道台阶", wide: 0.95, casing: "#1F262E", base: "#7C8897", done: "#AEBAC9", decor: "steps" },
+  { key: "陡坡山路", wide: 0.8, casing: "#4A1505", base: "#B23A10", done: "#E4693A", decor: "slope" },
+  { key: "攀爬", wide: 0.62, casing: "#221A13", base: "#5A4A3B", done: "#8A7460", decor: "rock" },
+  // 公路：沥青灰 + 两侧白边线 + 中央黄虚线。放在最后，不动已有 key 的顺序。
+  { key: "公路", wide: 1.35, casing: "#15181C", base: "#3A4048", done: "#5B636D", decor: "asphalt" },
+];
+/** 「无」= 保持原来的单色线（不画路面带） */
+export const ROAD_KEYS = ["无", ...ROAD_TYPES.map((t) => t.key)];
+const ROAD_BY_KEY = new Map(ROAD_TYPES.map((t) => [t.key, t]));
+
+/** 确定性伪随机（禁 Math.random：同一帧两次调用必须同值，否则出片与调参台对不上） */
+const pseudo = (i, salt) => {
+  const x = Math.sin(i * 12.9898 + salt * 78.233) * 43758.5453;
+  return x - Math.floor(x);
+};
+
+/**
+ * 按里程切一段路径串。
+ * 等距重采样下下标 i ↔ i×stepM，所以端点插值即可，中间顶点直接取。
+ */
+const sliceCache = new Map();
+function pathSlice(geo, m0, m1) {
+  const key = `${m0.toFixed(2)}|${m1.toFixed(2)}`;
+  const hit = sliceCache.get(key);
+  if (hit && hit.geo === geo) return hit.d;
+  const a = sampleAt(geo, m0);
+  const b = sampleAt(geo, m1);
+  let d = `M${a.x.toFixed(9)} ${a.y.toFixed(9)}`;
+  const i0 = Math.ceil(m0 / geo.stepM);
+  const i1 = Math.floor(m1 / geo.stepM);
+  for (let i = Math.max(1, i0); i <= i1 && i < geo.mx.length; i++) {
+    d += `L${geo.mx[i].toFixed(9)} ${geo.my[i].toFixed(9)}`;
+  }
+  d += `L${b.x.toFixed(9)} ${b.y.toFixed(9)}`;
+  if (sliceCache.size > 400) sliceCache.clear();
+  sliceCache.set(key, { geo, d });
+  return d;
+}
+
+/**
+ * 解析「路型分段」→ 覆盖全里程的连续区间数组。
+ *
+ * 起止支持三种写法（混用）：
+ *   数字         → 里程 km
+ *   "起点"/"终点" → 0 / 总里程
+ *   其他字符串    → 自定义途经点的「名称」，取其里程
+ * 重叠按「后定义覆盖先定义」，最后合并相邻同类型。
+ */
+export function parseRoadCuts(raw, geo, waypoints) {
+  let arr;
+  try {
+    arr = typeof raw === "string" ? JSON.parse(raw || "[]") : raw;
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(arr)) return [];
+  const total = geo.totalM;
+  const nameToM = new Map();
+  for (const w of waypoints ?? []) if (w.name) nameToM.set(String(w.name), w.distM);
+
+  const at = (v, fallback) => {
+    if (v === null || v === undefined || v === "") return fallback;
+    if (typeof v === "number" || /^-?\d+(\.\d+)?$/.test(String(v).trim())) {
+      return clamp(Number(v) * 1000, 0, total); // km → m
+    }
+    const s = String(v).trim();
+    if (s === "起点" || s === "开始") return 0;
+    if (s === "终点" || s === "结束") return total;
+    const m = nameToM.get(s);
+    return m === undefined ? null : clamp(m, 0, total);
+  };
+
+  const defs = [];
+  for (const it of arr) {
+    if (!it || typeof it !== "object") continue;
+    const type = String(it["路型"] ?? it.type ?? "").trim();
+    if (!ROAD_BY_KEY.has(type)) continue;
+    const s = at(it["起"] ?? it.start, 0);
+    const e = at(it["止"] ?? it.end, total);
+    if (s === null || e === null) continue; // 名称不存在：跳过（调参台会标红提示）
+    const lo = Math.min(s, e);
+    const hi = Math.max(s, e);
+    if (hi - lo < 0.5) continue;
+    defs.push({ s: lo, e: hi, t: type });
+  }
+  if (!defs.length) return [];
+
+  let segs = [{ s: 0, e: total, t: "无" }];
+  for (const d of defs) {
+    const next = [];
+    for (const g of segs) {
+      if (g.e <= d.s + 1e-6 || g.s >= d.e - 1e-6) {
+        next.push(g);
+        continue;
+      }
+      if (g.s < d.s - 1e-6) next.push({ s: g.s, e: d.s, t: g.t });
+      next.push({ s: Math.max(g.s, d.s), e: Math.min(g.e, d.e), t: d.t });
+      if (g.e > d.e + 1e-6) next.push({ s: d.e, e: g.e, t: g.t });
+    }
+    segs = next;
+  }
+  segs.sort((a, b) => a.s - b.s);
+  const merged = [];
+  for (const g of segs) {
+    const last = merged[merged.length - 1];
+    if (last && last.t === g.t && Math.abs(last.e - g.s) < 0.01) last.e = g.e;
+    else merged.push({ ...g });
+  }
+  return merged;
+}
+
+/**
+ * 沿路径生成材质图元 —— **屏幕坐标、像素尺寸**。
+ *
+ * ★ 为什么不用用户坐标（墨卡托）：
+ *   轨迹组的变换是 scale(k)，k 约 2×10⁷。若图元尺寸写成 1.8/k ≈ 8×10⁻⁸，
+ *   已经踩到 float32 精度下限，浏览器实际画出来是 0 或抖动；stroke-width 尤其明显。
+ *   所以这里把点直接投到屏幕（x*k+gx），尺寸用 px，渲染方放在**不缩放**的层里。
+ *   与路径的 transform 是同一个仿射变换，所以位置严格重合。
+ *
+ * @param upToM 只生成里程 ≤ 这个值的图元（材质跟着生长出现）
+ */
+function decorOf(geo, m0, m1, kind, bandPx, k, gx, gy, density, upToM, maxCount = 260) {
+  const out = [];
+  if (!kind || bandPx <= 0) return out;
+  const end = Math.min(m1, upToM);
+  if (end <= m0) return out;
+
+  const baseGap = { tire: 18, dirt: 13, steps: 15, slope: 14, rock: 38, asphalt: 9 }[kind] ?? 14;
+  let gapPx = baseGap / Math.max(0.2, density);
+  // 1px = (1/k) 用户单位 = mpu/k 米
+  const mPerPx = geo.mpu / k;
+  const lenPx = (end - m0) / Math.max(1e-6, mPerPx);
+  gapPx = Math.max(gapPx, lenPx / maxCount);
+  const gap = Math.max(mPerPx * 0.5, gapPx * mPerPx);
+
+  const half = bandPx / 2;
+  let n = 0;
+  for (let m = m0; m <= end; m += gap) {
+    const a = sampleAt(geo, Math.min(m, m1));
+    const b = sampleAt(geo, Math.min(m + 1.5, m1));
+    const px = a.x * k + gx;
+    const py = a.y * k + gy;
+    let tx = (b.x - a.x) * k;
+    let ty = (b.y - a.y) * k;
+    const L = Math.hypot(tx, ty);
+    if (L > 1e-9) {
+      tx /= L;
+      ty /= L;
+    } else {
+      tx = 1;
+      ty = 0;
+    }
+    const nx = -ty;
+    const ny = tx;
+    const i = n++;
+
+    if (kind === "steps") {
+      const h = half + 1.4;
+      out.push({ t: "l", x1: px - nx * h, y1: py - ny * h, x2: px + nx * h, y2: py + ny * h, c: "#F2F7FF", w: 1.5 });
+      out.push({
+        t: "l",
+        x1: px - nx * h + tx * 1.8,
+        y1: py - ny * h + ty * 1.8,
+        x2: px + nx * h + tx * 1.8,
+        y2: py + ny * h + ty * 1.8,
+        c: "#141A22",
+        w: 1.5,
+      });
+    } else if (kind === "tire") {
+      for (const side of [-1, 1]) {
+        const off = side * bandPx * 0.24;
+        const cx = px + nx * off;
+        const cy = py + ny * off;
+        const a2 = 4.2;
+        const b2 = 3.0;
+        out.push({ t: "l", x1: cx - nx * a2, y1: cy - ny * a2, x2: cx + tx * b2, y2: cy + ty * b2, c: "#2A1C10", w: 1.8 });
+        out.push({ t: "l", x1: cx + nx * a2, y1: cy + ny * a2, x2: cx + tx * b2, y2: cy + ty * b2, c: "#2A1C10", w: 1.8 });
+      }
+    } else if (kind === "slope") {
+      const h = half * 0.95;
+      const dx = (tx + nx) * h * 0.55;
+      const dy = (ty + ny) * h * 0.55;
+      out.push({ t: "l", x1: px - dx, y1: py - dy, x2: px + dx, y2: py + dy, c: "#6B1604", w: 1.8 });
+    } else if (kind === "dirt") {
+      const off = (pseudo(i, 3) - 0.5) * bandPx * 0.72;
+      out.push({
+        t: "c",
+        cx: px + nx * off,
+        cy: py + ny * off,
+        r: 1.2 + 1.7 * pseudo(i, 7),
+        f: pseudo(i, 11) > 0.5 ? "#8A6749" : "#F0DDBF",
+        o: 0.7 + 0.3 * pseudo(i, 13),
+      });
+    } else if (kind === "asphalt") {
+      // 公路：两侧白色边线（连续短段）+ 中央黄色虚线（每 3 个采样点一段）
+      const hw = bandPx * 0.42;
+      const seg2 = 3.2;
+      out.push({ t: "l", x1: px - nx * hw - tx * seg2, y1: py - ny * hw - ty * seg2, x2: px - nx * hw + tx * seg2, y2: py - ny * hw + ty * seg2, c: "#E9EEF5", w: 1.3 });
+      out.push({ t: "l", x1: px + nx * hw - tx * seg2, y1: py + ny * hw - ty * seg2, x2: px + nx * hw + tx * seg2, y2: py + ny * hw + ty * seg2, c: "#E9EEF5", w: 1.3 });
+      if (i % 3 === 0) {
+        const d2 = 5.5;
+        out.push({ t: "l", x1: px - tx * d2, y1: py - ty * d2, x2: px + tx * d2, y2: py + ty * d2, c: "#E8C24A", w: 1.6 });
+      }
+    } else if (kind === "rock") {
+      const off = (pseudo(i, 5) - 0.5) * bandPx * 0.6;
+      const cx = px + nx * off;
+      const cy = py + ny * off;
+      out.push({ t: "c", cx, cy, r: 1.9 + 1.2 * pseudo(i, 17), f: pseudo(i, 19) > 0.45 ? "#F0D3A2" : "#CFBBA1", o: 1 });
+      const a2 = 2.6;
+      out.push({ t: "l", x1: cx - nx * a2, y1: cy - ny * a2, x2: cx + nx * a2 * 0.7, y2: cy + ny * a2 * 0.7, c: "#2A1F16", w: 1.1 });
+    }
+  }
+  return out;
+}
+
+/**
+ * 段坡度角（度）。
+ *
+ * ★ 标「最陡 200 m 窗口」而不是整段平均：
+ *   2.9 km 的环线累计爬升 119 m，整段平均只有 4° —— 平均坡度会把陡坡摊平，
+ *   标出来全是「↗3°」，等于没标。取段内滑动窗口的最大坡度，才对应「这段有个陡坡」的体感。
+ *   段长不足一个窗口时退化为整段平均。
+ * @param mode "max" 取最陡窗口（标注用） | "avg" 整段平均（游标读数用）
+ */
+function slopeOf(geo, s, e, mode = "max") {
+  const sm = clamp(s, 0, geo.totalM);
+  const em = clamp(e, 0, geo.totalM);
+  const dist = Math.max(1, em - sm);
+  const at = (m) => geo.ele[Math.round(clamp(m, 0, geo.totalM) / geo.stepM)] ?? 0;
+  const dEle = at(em) - at(sm);
+  const avg = (Math.atan2(Math.abs(dEle), dist) * 180) / Math.PI;
+  if (mode === "avg" || dist <= 220) return { deg: avg, up: dEle >= 0, dEle };
+
+  const winM = Math.min(200, dist);
+  let best = avg;
+  let bestUp = dEle >= 0;
+  for (let m = sm; m + winM <= em; m += 20) {
+    const d = at(m + winM) - at(m);
+    const deg = (Math.atan2(Math.abs(d), winM) * 180) / Math.PI;
+    if (deg > best) {
+      best = deg;
+      bestUp = d >= 0;
+    }
+  }
+  return { deg: best, up: bestUp, dEle };
 }
 
 /**
@@ -437,6 +720,30 @@ export function buildTrailScene(geo, D, props, frame, cfg) {
   //   否则 "transparent" 会被判成非法颜色回落成不透明底色。
   const bgColor = M["透明背景"] ? "transparent" : safeColor(M["背景色"], D["地图"]["背景色"]);
 
+  // ---------- 路型参数 ----------
+  const R = { ...(D["路型"] ?? {}), ...(P["路型"] ?? {}) };
+  const showRoad = R["显示路型"] !== false;
+  const roadMul = clamp(num(R["路型带宽倍数"], 2), 1, 6);
+  const roadDensity = clamp(num(R["纹理密度"], 1), 0.2, 3);
+  // 色相强度：0 = 全部用轨迹主色（只靠宽度和材质区分），1 = 满色
+  const roadHue = clamp(num(R["路型色相强度"], 0.85), 0, 1);
+  const showRoadBadge = R["段首徽标"] !== false;
+  const badgeFont = clamp(num(R["徽标字号"], 17), 10, 40);
+  const badgePosRaw = R["徽标位置"] ?? "自动";
+  const badgePos = ["自动", "上", "下", "左", "右"].includes(badgePosRaw) ? badgePosRaw : "自动";
+  const badgeGap = clamp(num(R["徽标偏移"], 0), -120, 200);
+  const badgeColor = safeColor(R["徽标颜色"], "#FFFFFF");
+  // 坡度：剖面标注 + 游标读数（阈值以下不标）
+  const showSlopeMark = C["剖面坡度标注"] === true;
+  const slopeMinDeg = clamp(num(C["坡度标注下限"], 15), 0, 60);
+  const slopeFont = clamp(num(C["坡度标注字号"], 16), 10, 60);
+  const slopeLift = clamp(num(C["坡度标注上移"], 26), -60, 300);
+  const slopeColor = safeColor(C["坡度标注颜色"], "#FFFFFF");
+  const showSlopeReadout = U["坡度读数"] === true;
+  const slopeReadFont = clamp(num(U["坡度读数字号"], 14), 8, 60);
+  const slopeReadLift = clamp(num(U["坡度读数上移"], 0), -40, 200);
+  const slopeReadColor = safeColor(U["坡度读数颜色"], "#FFFFFF");
+
   // ---------- ② 唯一的驱动量：帧 → 里程 ----------
   const ease = EASING_FN[String(A["生长缓动"])] ?? EASING_FN["线性"];
   const growFrames = Math.max(1, Math.round(sec * fps));
@@ -504,6 +811,9 @@ export function buildTrailScene(geo, D, props, frame, cfg) {
   // ---------- ⑥ 轨迹 ----------
   const k = cam.k;
   const invK = 1 / k;
+  // 轨迹组的世界→屏幕平移量（材质图元用屏幕坐标，必须与这个变换严格一致）
+  const gxMap = width / 2 - cam.cx * k;
+  const gyMap = mapH / 2 - cam.cy * k;
   const mercNorm = mercLengthFractions(geo);
   const drawnFrac = mercFractionAtDistance(geo, mercNorm, distM);
 
@@ -565,6 +875,99 @@ export function buildTrailScene(geo, D, props, frame, cfg) {
           halo: MARK_HALO,
         })
       );
+    }
+  }
+
+  // ---------- ⑥b 路型分段：按里程切路径 + 生成材质图元 ----------
+  // ★ 只有在「路型分段」解析出实际区间时才接管轨迹绘制；
+  //   否则 road = null，渲染方走原来的单条 trackPath（保证关掉后逐像素一致）。
+  let road = null;
+  if (showRoad) {
+    const wps = waypointsOf(T["自定义途经点"], geo);
+    const cuts = parseRoadCuts(R["路型分段"], geo, wps);
+    if (cuts.length) {
+      const bandBase = trackW * roadMul;
+      // 色相强度 0 → 退回轨迹主色（材质/宽度仍在，只是不再区分颜色）
+      const tint = (c) => (roadHue >= 0.999 ? c : mixHex(pathColor, c, roadHue));
+      const segs = cuts.map((sg, si) => {
+        const def = ROAD_BY_KEY.get(sg.t) ?? null;
+        const plain = !def;
+        const bandPx = plain ? trackW : bandBase * def.wide;
+        const p = clamp01((distM - sg.s) / Math.max(1, sg.e - sg.s)) * 100;
+        // 起点徽标：段长太短不标（挤不下），沿法向让开路面带。
+        // ★ 同样是屏幕坐标 + px 字号：放进 scale(k) 组里字号会变成 1e-7 量级。
+        let badge = null;
+        if (showRoadBadge && !plain && sg.e - sg.s > geo.totalM * 0.05) {
+          // 徽标放**段中点**：段首往往正好压着途经点标签
+          const midM = (sg.s + sg.e) / 2;
+          const bp = sampleAt(geo, midM);
+          const bq = sampleAt(geo, Math.min(midM + 6, sg.e));
+          const bpx = bp.x * k + gxMap;
+          const bpy = bp.y * k + gyMap;
+          let tx = (bq.x - bp.x) * k;
+          let ty = (bq.y - bp.y) * k;
+          const L = Math.hypot(tx, ty) || 1;
+          tx /= L;
+          ty /= L;
+          const off = bandPx / 2 + badgeFont * 0.82 + badgeGap;
+          const pop = clamp01((distM - sg.s) / (geo.totalM * 0.01));
+          if (pop > 0.02) {
+            // 「自动」= 沿法向左右交替（相邻段一左一右，避开途经点标签）；
+            // 其余方位是**屏幕上的绝对方向**，用户按字面理解「上/下/左/右」即可。
+            let bx = bpx;
+            let by = bpy;
+            let anchor = "middle";
+            if (badgePos === "自动") {
+              const sgn = si % 2 === 0 ? 1 : -1;
+              bx = bpx - sgn * ty * off;
+              by = bpy + sgn * tx * off;
+            } else if (badgePos === "上") {
+              by = bpy - off;
+            } else if (badgePos === "下") {
+              by = bpy + off + badgeFont * 0.35;
+            } else if (badgePos === "左") {
+              bx = bpx - off;
+              anchor = "end";
+            } else if (badgePos === "右") {
+              bx = bpx + off;
+              anchor = "start";
+            }
+            badge = {
+              x: bx,
+              y: by,
+              anchor,
+              text: def.key,
+              fontSize: badgeFont,
+              opacity: pop,
+              color: badgeColor,
+              haloColor: "rgba(0,0,0,0.72)",
+              haloWidth: badgeFont * 0.16,
+            };
+          }
+        }
+        return {
+          key: `rd:${si}:${sg.t}`,
+          type: sg.t,
+          plain,
+          startM: sg.s,
+          endM: sg.e,
+          d: pathSlice(geo, sg.s, sg.e),
+          bandW: bandPx * invK,
+          casingW: (bandPx + 3) * invK,
+          casing: plain ? null : tint(def.casing),
+          base: plain ? pathColor : tint(def.base),
+          done: plain ? doneColor : tint(def.done),
+          p,
+          // ★ 材质**全段生成**，不按已走裁剪：
+          //   用户要的是「一眼看懂整条路线哪里是什么路」，所以让未走段也带材质（压暗显示）。
+          //   生长感由底色带的 dash 裁剪负责，两者互补。
+          decor: plain ? [] : decorOf(geo, sg.s, sg.e, def.decor, bandPx, k, gxMap, gyMap, roadDensity, sg.e),
+          decorAlpha: plain ? 1 : p > 0.5 ? 1 : 0.34,
+          baseAlpha: plain ? ghostOpacity : clamp(ghostOpacity + 0.1, 0.35, 0.85),
+          badge,
+        };
+      });
+      road = { segments: segs, bandPx: bandBase * invK, total: cuts.length };
     }
   }
 
@@ -635,6 +1038,42 @@ export function buildTrailScene(geo, D, props, frame, cfg) {
             color: readColor,
           }
         : null,
+      // 坡度标注：只标「有路型且 ≥ 阈值」的段，位置取段中点、曲线正上方。
+      // 跟随窗口模式下曲线会滑动，x 映射不再等于里程比例 —— 只在整条模式标。
+      slopeMarks: (() => {
+        if (!showSlopeMark || !wholeProfile || !road) return [];
+        const outList = [];
+        for (const sg of road.segments) {
+          if (sg.plain) continue;
+          const sl = slopeOf(g, sg.startM, sg.endM);
+          if (!(sl.deg >= slopeMinDeg)) continue;
+          const midM = (sg.startM + sg.endM) / 2;
+          const midEle = sampleAt(g, midM).ele;
+          outList.push({
+            x: plotLeft + (midM / Math.max(1, geo.totalM)) * plotW,
+            y: profileY(midEle, eleLo, eleHi, plotTop, profH) - slopeLift,
+            text: `${sl.up ? "↗" : "↘"} ${Math.round(sl.deg)}°`,
+            color: slopeColor,
+            fontSize: slopeFont,
+          });
+        }
+        return outList;
+      })(),
+      // 游标所在段的坡度（读数下方单独一行；不在任何路型段内则不显示）
+      slopeReadout: (() => {
+        if (!showSlopeReadout || !road) return null;
+        const hit = road.segments.find((sg) => distM >= sg.startM && distM <= sg.endM && !sg.plain);
+        if (!hit) return null;
+        const sl = slopeOf(g, hit.startM, hit.endM, "avg");
+        // y 直接算好：与海拔读数是同一条基线，再叠「坡度读数上移」
+        const baseY = plotTop - readLift;
+        return {
+          text: `${sl.up ? "↗" : "↘"} ${Math.round(sl.deg)}°`,
+          color: slopeReadColor,
+          fontSize: slopeReadFont,
+          y: baseY + slopeReadFont * 2.1 + slopeReadLift,
+        };
+      })(),
     };
   }
 
@@ -695,10 +1134,13 @@ export function buildTrailScene(geo, D, props, frame, cfg) {
       darkBottom: `rgba(4,8,14,${(tileDarken * 0.72).toFixed(3)})`,
       topFadeHeight: mapH * 0.42,
       topFadeAlpha: showBase ? 0.45 : 0,
-      gx: width / 2 - cam.cx * k,
-      gy: mapH / 2 - cam.cy * k,
+      gx: gxMap,
+      gy: gyMap,
       k,
       trackPath: trackPathOf(geo),
+      // 路型分段：null = 未启用（渲染方走 trackPath 单线）。有值时按段绘制路面带，
+      // 每段自带 d / 包边 / 底色 / 已走色 / 段内进度 p / 材质图元 / 徽标。
+      road,
       ghost: { color: pathColor, opacity: ghostOpacity, widthUser: trackW * invK },
       glow: {
         on: T["显示光晕"] !== false,

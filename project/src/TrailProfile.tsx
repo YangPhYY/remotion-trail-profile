@@ -142,42 +142,128 @@ export const TrailProfile: React.FC<TrailProfileProps> = (props) => {
                 全部不渲染（后三者在场景模型里已按同一开关置空）。 */}
           {m.showTrack ? (
             <g transform={`translate(${m.gx.toFixed(3)} ${m.gy.toFixed(3)}) scale(${m.k})`}>
-              <path
-                d={m.trackPath}
-                fill="none"
-                stroke={m.ghost.color}
-                strokeOpacity={m.ghost.opacity}
-                strokeWidth={m.ghost.widthUser}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-              {m.glow.on ? (
-                <path
-                  d={m.trackPath}
-                  fill="none"
-                  stroke={m.glow.color}
-                  strokeOpacity={0.55}
-                  strokeWidth={m.glow.widthUser}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  filter="url(#tp-glow)"
-                  pathLength={1}
-                  strokeDasharray={m.glow.dash}
-                />
-              ) : null}
-              {/* 已走部分：pathLength=1 + dasharray 局部绘制，比例按墨卡托弧长归一 */}
-              <path
-                d={m.trackPath}
-                fill="none"
-                stroke={m.done.color}
-                strokeWidth={m.done.widthUser}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                pathLength={1}
-                strokeDasharray={m.done.dash}
-              />
+              {m.road ? (
+                // ★ 路型模式：按里程分段画「路面带」。
+                //   每段 = 包边（深色，模拟厚度）→ 未走底色（压暗）→ 已走底色（亮，dash 裁剪）。
+                //   材质图元与徽标**不在这里**：它们是屏幕坐标（见下方独立一层），
+                //   因为 scale(k) 下 1.8px 会变成 8e-8，踩到浮点精度下限直接画不出来。
+                m.road.segments.map((seg: any) => (
+                  <g key={seg.key}>
+                    {seg.casing ? (
+                      <path
+                        d={seg.d}
+                        fill="none"
+                        stroke={seg.casing}
+                        strokeWidth={seg.casingW}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        opacity={0.9}
+                      />
+                    ) : null}
+                    <path
+                      d={seg.d}
+                      fill="none"
+                      stroke={seg.base}
+                      strokeWidth={seg.bandW}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      opacity={seg.baseAlpha ?? 0.4}
+                    />
+                    {seg.p > 0.01 ? (
+                      <path
+                        d={seg.d}
+                        fill="none"
+                        stroke={seg.done}
+                        strokeWidth={seg.bandW}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        pathLength={1}
+                        strokeDasharray={`${(seg.p / 100).toFixed(4)} 1`}
+                      />
+                    ) : null}
+                  </g>
+                ))
+              ) : (
+                <>
+                  <path
+                    d={m.trackPath}
+                    fill="none"
+                    stroke={m.ghost.color}
+                    strokeOpacity={m.ghost.opacity}
+                    strokeWidth={m.ghost.widthUser}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  {m.glow.on ? (
+                    <path
+                      d={m.trackPath}
+                      fill="none"
+                      stroke={m.glow.color}
+                      strokeOpacity={0.55}
+                      strokeWidth={m.glow.widthUser}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      filter="url(#tp-glow)"
+                      pathLength={1}
+                      strokeDasharray={m.glow.dash}
+                    />
+                  ) : null}
+                  {/* 已走部分：pathLength=1 + dasharray 局部绘制，比例按墨卡托弧长归一 */}
+                  <path
+                    d={m.trackPath}
+                    fill="none"
+                    stroke={m.done.color}
+                    strokeWidth={m.done.widthUser}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    pathLength={1}
+                    strokeDasharray={m.done.dash}
+                  />
+                </>
+              )}
             </g>
           ) : null}
+
+          {/* 材质 + 徽标：屏幕坐标层（不随相机缩放）。位置由场景模型按 x*k+gx 算好，
+              与上面那组 transform 是同一个仿射变换，所以严格重合。 */}
+          {m.showTrack && m.road
+            ? m.road.segments.map((seg: any) => (
+                <g key={`m${seg.key}`} opacity={seg.decorAlpha ?? 1}>
+                  {seg.decor.map((d: any, i: number) =>
+                    d.t === "c" ? (
+                      <circle key={`d${i}`} cx={d.cx} cy={d.cy} r={d.r} fill={d.f} opacity={d.o ?? 1} />
+                    ) : (
+                      <line
+                        key={`d${i}`}
+                        x1={d.x1}
+                        y1={d.y1}
+                        x2={d.x2}
+                        y2={d.y2}
+                        stroke={d.c}
+                        strokeWidth={d.w}
+                        strokeLinecap="round"
+                      />
+                    )
+                  )}
+                  {seg.badge ? (
+                    <text
+                      x={seg.badge.x}
+                      y={seg.badge.y}
+                      textAnchor={(seg.badge.anchor ?? "middle") as "start" | "middle" | "end"}
+                      fontSize={seg.badge.fontSize}
+                      fontWeight={600}
+                      fill={seg.badge.color}
+                      stroke={seg.badge.haloColor}
+                      strokeWidth={seg.badge.haloWidth}
+                      paintOrder="stroke"
+                      opacity={seg.badge.opacity}
+                    >
+                      {seg.badge.text}
+                    </text>
+                  ) : null}
+                </g>
+              ))
+            : null}
 
           {/* 起点 / 终点 / 头部光点（屏幕空间，不随相机缩放） */}
           {m.start ? (
@@ -346,6 +432,44 @@ export const TrailProfile: React.FC<TrailProfileProps> = (props) => {
               {s.profile.readout.text}
             </text>
           ) : null}
+
+          {/* 游标坡度读数：海拔数字正下方一行，比读数小一半 */}
+          {s.profile.slopeReadout ? (
+            <text
+              x={s.profile.readout?.x ?? s.profile.cursorX}
+              y={s.profile.slopeReadout.y}
+              textAnchor="middle"
+              fontSize={s.profile.slopeReadout.fontSize}
+              fontWeight={600}
+              fill={s.profile.slopeReadout.color}
+              fillOpacity={0.82}
+              stroke="rgba(0,0,0,0.5)"
+              strokeWidth={s.profile.slopeReadout.fontSize * 0.16}
+              paintOrder="stroke"
+            >
+              {s.profile.slopeReadout.text}
+            </text>
+          ) : null}
+
+          {/* 段坡度标注：只标 ≥ 下限的路型段，位置取段中点曲线正上方 */}
+          {s.profile.slopeMarks?.map((sl: any, i: number) => (
+            <text
+              key={`sl${i}`}
+              x={sl.x}
+              y={sl.y}
+              textAnchor="middle"
+              fontSize={sl.fontSize}
+              fontWeight={600}
+              fill={sl.color}
+              fillOpacity={0.9}
+              stroke="rgba(0,0,0,0.5)"
+              strokeWidth={sl.fontSize * 0.14}
+              paintOrder="stroke"
+              letterSpacing={0.5}
+            >
+              {sl.text}
+            </text>
+          ))}
         </svg>
       ) : null}
 

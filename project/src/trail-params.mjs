@@ -62,6 +62,22 @@ export const PARAM_GROUPS = [
     ],
   },
   {
+    group: "路型",
+    hint: "把轨迹按里程切成不同路面：机耕路 / 土路 / 步道台阶 / 陡坡山路 / 攀爬。起止可写途经点名称，也可直接写里程 km",
+    items: [
+      { key: "显示路型", type: "bool" },
+      { key: "路型分段", type: "text", ui: "roads" },
+      { key: "路型带宽倍数", type: "range", min: 1, max: 6, step: 0.1, unit: "× 线宽" },
+      { key: "路型色相强度", type: "range", min: 0, max: 1, step: 0.02 },
+      { key: "纹理密度", type: "range", min: 0.2, max: 3, step: 0.05 },
+      { key: "段首徽标", type: "bool" },
+      { key: "徽标位置", type: "select", options: ["自动", "上", "下", "左", "右"] },
+      { key: "徽标偏移", type: "range", min: -120, max: 200, step: 2, unit: "px" },
+      { key: "徽标字号", type: "range", min: 10, max: 40, step: 1, unit: "px" },
+      { key: "徽标颜色", type: "color" },
+    ],
+  },
+  {
     group: "海拔剖面",
     hint: "参考图那一层。「整条显示」= 全程曲线一屏铺满、游标随里程从左到右扫；「跟随窗口」= 只显示游标附近一段",
     items: [
@@ -82,6 +98,11 @@ export const PARAM_GROUPS = [
       { key: "填充不透明度", type: "range", min: 0, max: 1, step: 0.02 },
       { key: "未走不透明度", type: "range", min: 0, max: 1, step: 0.02 },
       { key: "内衬不透明度", type: "range", min: 0, max: 1, step: 0.02 },
+      { key: "剖面坡度标注", type: "bool" },
+      { key: "坡度标注下限", type: "range", min: 0, max: 60, step: 1, unit: "°" },
+      { key: "坡度标注字号", type: "range", min: 10, max: 60, step: 1, unit: "px" },
+      { key: "坡度标注上移", type: "range", min: -60, max: 300, step: 2, unit: "px" },
+      { key: "坡度标注颜色", type: "color" },
     ],
   },
   {
@@ -90,6 +111,10 @@ export const PARAM_GROUPS = [
     items: [
       { key: "显示", type: "bool" },
       { key: "读数显示", type: "bool" },
+      { key: "坡度读数", type: "bool" },
+      { key: "坡度读数字号", type: "range", min: 8, max: 60, step: 1, unit: "px" },
+      { key: "坡度读数上移", type: "range", min: -40, max: 200, step: 2, unit: "px" },
+      { key: "坡度读数颜色", type: "color" },
       { key: "读数字号", type: "range", min: 16, max: 140, step: 1, unit: "px" },
       { key: "读数上移", type: "range", min: 0, max: 300, step: 2, unit: "px" },
       { key: "线宽", type: "range", min: 1, max: 12, step: 0.5, unit: "px" },
