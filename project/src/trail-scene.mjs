@@ -18,6 +18,7 @@ import {
   tileScreenSize,
   sampleAt,
   smoothArray,
+  despikeArray,
   profilePolyline,
   profileY,
   niceBounds,
@@ -70,6 +71,17 @@ const readoutHalfW = (text, fontSize) => {
   return (w * fontSize + String(text).length * 1) / 2 + 10;
 };
 
+
+/** 去尖峰后的高程数组：与 deg 无关，按 geo 缓存一次（每帧重建 3181 点的中值滤波纯属浪费） */
+const eleCleanCache = new WeakMap();
+function cleanedEle(geo) {
+  let arr = eleCleanCache.get(geo);
+  if (!arr) {
+    arr = despikeArray(geo.ele, geo.stepM || 10);
+    eleCleanCache.set(geo, arr);
+  }
+  return arr;
+}
 
 /** 轨迹墨卡托路径串（只与几何有关，缓存一次 —— 每帧重建 3100 点的串纯属浪费） */
 let trackPathCache = null;
@@ -315,35 +327,66 @@ function decorOf(geo, m0, m1, kind, bandPx, k, gx, gy, density, upToM, maxCount 
 }
 
 /**
- * 段坡度角（度）。
+ * 坡度计算（全部按「平滑海拔 + 窗口」做）。
  *
- * ★ 标「最陡 200 m 窗口」而不是整段平均：
- *   2.9 km 的环线累计爬升 119 m，整段平均只有 4° —— 平均坡度会把陡坡摊平，
- *   标出来全是「↗3°」，等于没标。取段内滑动窗口的最大坡度，才对应「这段有个陡坡」的体感。
- *   段长不足一个窗口时退化为整段平均。
- * @param mode "max" 取最陡窗口（标注用） | "avg" 整段平均（游标读数用）
+ * ★ 为什么不能直接拿相邻两点算（老实现的坑）：
+ *   10 m 步长下，GPS 高程二阶差分中位数就有 0.7 m、p99 达 16 m。
+ *   单点抖动 0.7 m / 10 m = 4° 假坡度，于是「瞬时坡度」整条都在 ±10° 乱跳。
+ *   这里先在**米**尺度上平滑（默认 90 m），再取一段窗口的高差 —— 噪声按 √n 衰减。
+ *
+ * ★ 线性插值而不是 Math.round：
+ *   round 会把窗口端点吸到最近的样本上，窗口实际长度在 ±stepM 之间游走，
+ *   同一个坡在两帧里能差好几度（2.9 km 环线上实测抖动 1.8°）。
  */
-function slopeOf(geo, s, e, mode = "max") {
+function slopeProfileFor(g, smoothM) {
+  const stepM = g.stepM || 10;
+  const n = Math.max(1, Math.round(smoothM / stepM));
+  return smoothM >= stepM ? smoothArray(g.ele, n) : g.ele;
+}
+
+/** 线性插值取海拔（profile 与 geo 等价索引，只是给坡度用的平滑版本） */
+function eleAtM(profile, geo, m) {
+  const t = clamp(m, 0, geo.totalM) / geo.stepM;
+  const i = Math.min(profile.length - 1, Math.floor(t));
+  const f = t - i;
+  const a = profile[i] ?? 0;
+  const b = profile[Math.min(profile.length - 1, i + 1)] ?? a;
+  return a + (b - a) * f;
+}
+
+/** 以 centerM 为中心、窗口 winM 的坡度（度）。窗口会被里程边界裁短 */
+function slopeAt(profile, geo, centerM, winM) {
+  const half = winM / 2;
+  const a = clamp(centerM - half, 0, geo.totalM);
+  const b = clamp(centerM + half, 0, geo.totalM);
+  if (b - a < 5) return { deg: 0, up: true, dEle: 0 };
+  const d = eleAtM(profile, geo, b) - eleAtM(profile, geo, a);
+  return { deg: (Math.atan2(Math.abs(d), b - a) * 180) / Math.PI, up: d >= 0, dEle: d };
+}
+
+/**
+ * 段内最陡的一段（返回**坡度值的实际位置** atM）。
+ *
+ * ★ 老实现把「段内最陡值」标在段**中点**：7 km 的段里只有 200 m 陡，标签却落在平地上，
+ *   数字和曲线对不上 —— 这才是「看着不准」的主因之一。现在标签跟着最陡窗口走。
+ */
+function steepestIn(profile, geo, s, e, winM) {
   const sm = clamp(s, 0, geo.totalM);
   const em = clamp(e, 0, geo.totalM);
-  const dist = Math.max(1, em - sm);
-  const at = (m) => geo.ele[Math.round(clamp(m, 0, geo.totalM) / geo.stepM)] ?? 0;
-  const dEle = at(em) - at(sm);
-  const avg = (Math.atan2(Math.abs(dEle), dist) * 180) / Math.PI;
-  if (mode === "avg" || dist <= 220) return { deg: avg, up: dEle >= 0, dEle };
-
-  const winM = Math.min(200, dist);
-  let best = avg;
-  let bestUp = dEle >= 0;
-  for (let m = sm; m + winM <= em; m += 20) {
-    const d = at(m + winM) - at(m);
-    const deg = (Math.atan2(Math.abs(d), winM) * 180) / Math.PI;
-    if (deg > best) {
-      best = deg;
-      bestUp = d >= 0;
-    }
+  const span = em - sm;
+  if (span < 5) return { deg: 0, up: true, dEle: 0, atM: sm };
+  const win = Math.min(winM, span);
+  const stepM = Math.max(5, geo.stepM || 10);
+  let best = null;
+  for (let m = sm; m + win <= em + 1e-6; m += stepM) {
+    const sl = slopeAt(profile, geo, m + win / 2, win);
+    if (!best || sl.deg > best.deg) best = { ...sl, atM: m + win / 2, winM: win };
   }
-  return { deg: best, up: bestUp, dEle };
+  if (!best) {
+    const sl = slopeAt(profile, geo, (sm + em) / 2, win);
+    best = { ...sl, atM: (sm + em) / 2, winM: win };
+  }
+  return best;
 }
 
 /**
@@ -737,9 +780,18 @@ export function buildTrailScene(geo, D, props, frame, cfg) {
   const showSlopeMark = C["剖面坡度标注"] === true;
   const slopeMinDeg = clamp(num(C["坡度标注下限"], 15), 0, 60);
   const slopeFont = clamp(num(C["坡度标注字号"], 16), 10, 60);
+  // 坡度口径：先按米平滑（压 GPS 高程噪声）→ 再取窗口高差
+  const slopePct = C["坡度单位"] === "百分比";
+  // 百分比 = tan(角度)×100（高差/水平距离），户外 App 多按这个口径
+  const fmtSlope = (sl) =>
+    `${sl.up ? "↗" : "↘"} ${slopePct ? Math.round(Math.tan((sl.deg * Math.PI) / 180) * 100) + "%" : Math.round(sl.deg) + "°"}`;
+  const slopeSmoothM = clamp(num(C["坡度平滑米"], 90), 0, 400);
+  const slopeWinM = clamp(num(C["坡度窗口米"], 200), 60, 600);
   const slopeLift = clamp(num(C["坡度标注上移"], 26), -60, 300);
   const slopeColor = safeColor(C["坡度标注颜色"], "#FFFFFF");
   const showSlopeReadout = U["坡度读数"] === true;
+  // 读数窗口比标注窗口短：读数要跟着游标变，标注要代表「这一段有多陡」
+  const slopeReadWinM = clamp(num(U["坡度读数窗口米"], 160), 40, 600);
   const slopeReadFont = clamp(num(U["坡度读数字号"], 14), 8, 60);
   const slopeReadLift = clamp(num(U["坡度读数上移"], 0), -40, 200);
   const slopeReadColor = safeColor(U["坡度读数颜色"], "#FFFFFF");
@@ -751,8 +803,13 @@ export function buildTrailScene(geo, D, props, frame, cfg) {
   const distM = progress * geo.totalM;
   const finished = progress >= 0.9999;
 
+  // 海拔清洗：先去掉 GPS 高程的「台阶」坏点，再做滑动平均。
+  // ★ 顺序不能反：先平滑的话坏点会被摊成一个几十米宽的假坑，剖面图上凭空多出一个陡坡。
+  const eleClean = cleanedEle(geo);
   // 海拔平滑：对称滑动平均不产生相位偏移，峰谷位置不平移 → 一一对应仍成立
-  const g = smoothWin > 1 ? { ...geo, ele: smoothArray(geo.ele, smoothWin) } : geo;
+  const g = smoothWin > 1 ? { ...geo, ele: smoothArray(eleClean, smoothWin) } : { ...geo, ele: eleClean };
+  // 坡度专用的海拔（在「画曲线那份」之上再按米平滑）：只影响坡度数字，不改曲线形状
+  const slopeProf = slopeProfileFor(g, slopeSmoothM);
 
   // ---------- ③ 剖面几何（先算 —— 地图区要裁到它的上沿） ----------
   // ★ 两种剖面模式
@@ -1045,30 +1102,34 @@ export function buildTrailScene(geo, D, props, frame, cfg) {
         const outList = [];
         for (const sg of road.segments) {
           if (sg.plain) continue;
-          const sl = slopeOf(g, sg.startM, sg.endM);
+          const sl = steepestIn(slopeProf, geo, sg.startM, sg.endM, slopeWinM);
           if (!(sl.deg >= slopeMinDeg)) continue;
-          const midM = (sg.startM + sg.endM) / 2;
-          const midEle = sampleAt(g, midM).ele;
+          // ★ 标在「最陡窗口的中心」，不是段中点：段中点常常是平地，数字会和曲线对不上
+          const markEle = sampleAt(g, sl.atM).ele;
+          const markX = plotLeft + (sl.atM / Math.max(1, geo.totalM)) * plotW;
+          // 游标扫到标注附近时淡出：挡着读数是常事，硬挪位置又会跳
+          const dx = Math.abs(markX - cursorX);
           outList.push({
-            x: plotLeft + (midM / Math.max(1, geo.totalM)) * plotW,
-            y: profileY(midEle, eleLo, eleHi, plotTop, profH) - slopeLift,
-            text: `${sl.up ? "↗" : "↘"} ${Math.round(sl.deg)}°`,
+            x: markX,
+            y: profileY(markEle, eleLo, eleHi, plotTop, profH) - slopeLift,
+            text: fmtSlope(sl),
             color: slopeColor,
             fontSize: slopeFont,
+            opacity: clamp01((dx - 45) / 70),
           });
         }
         return outList;
       })(),
       // 游标所在段的坡度（读数下方单独一行；不在任何路型段内则不显示）
       slopeReadout: (() => {
-        if (!showSlopeReadout || !road) return null;
-        const hit = road.segments.find((sg) => distM >= sg.startM && distM <= sg.endM && !sg.plain);
-        if (!hit) return null;
-        const sl = slopeOf(g, hit.startM, hit.endM, "avg");
+        if (!showSlopeReadout) return null;
+        // ★ 取「游标附近的窗口」而不是「所在路型段的整段平均」：
+        //   老实现整段一个数，7 km 的段里游标走到底数字都不变，看起来就像跟不上坡度变化。
+        const sl = slopeAt(slopeProf, geo, distM, slopeReadWinM);
         // y 直接算好：与海拔读数是同一条基线，再叠「坡度读数上移」
         const baseY = plotTop - readLift;
         return {
-          text: `${sl.up ? "↗" : "↘"} ${Math.round(sl.deg)}°`,
+          text: fmtSlope(sl),
           color: slopeReadColor,
           fontSize: slopeReadFont,
           y: baseY + slopeReadFont * 2.1 + slopeReadLift,

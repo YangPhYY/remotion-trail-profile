@@ -1336,7 +1336,7 @@ function render() {
       q.push(`<text x="${rx}" y="${ry.toFixed(2)}" text-anchor="middle" font-size="${pr.slopeReadout.fontSize}" font-weight="600" fill="${pr.slopeReadout.color}" fill-opacity="0.82" stroke="rgba(0,0,0,0.5)" stroke-width="${(pr.slopeReadout.fontSize * 0.16).toFixed(2)}" paint-order="stroke">${esc(pr.slopeReadout.text)}</text>`);
     }
     for (const sl of pr.slopeMarks ?? []) {
-      q.push(`<text x="${sl.x.toFixed(2)}" y="${sl.y.toFixed(2)}" text-anchor="middle" font-size="${sl.fontSize}" font-weight="600" fill="${sl.color}" fill-opacity="0.9" stroke="rgba(0,0,0,0.5)" stroke-width="${(sl.fontSize * 0.14).toFixed(2)}" paint-order="stroke" letter-spacing="0.5">${esc(sl.text)}</text>`);
+      q.push(`<text x="${sl.x.toFixed(2)}" y="${sl.y.toFixed(2)}" text-anchor="middle" font-size="${sl.fontSize}" font-weight="600" fill="${sl.color}" fill-opacity="${(0.9 * (sl.opacity ?? 1)).toFixed(3)}" stroke="rgba(0,0,0,0.5)" stroke-width="${(sl.fontSize * 0.14).toFixed(2)}" paint-order="stroke" letter-spacing="0.5">${esc(sl.text)}</text>`);
     }
     profRest.innerHTML = q.join("");
   } else {

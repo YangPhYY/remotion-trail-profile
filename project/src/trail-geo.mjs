@@ -50,6 +50,41 @@ export const EASING_FN = {
  * 对称滑动平均（前缀和 O(n)）。用于压 GPS 海拔噪声。
  * 对称滤波不产生相位偏移 —— 峰谷位置不会平移，所以「海拔与地理位置一一对应」仍然成立。
  */
+/**
+ * 差分中值去尖峰（GPS 高程的「台阶」错误）。
+ *
+ * ★ 为什么平滑救不了它：这类错误不是单点抖动，而是一步跳下去**然后一直停在那儿**。
+ *   实测嵩山少太连穿的原始数据：4.50 km 处 1124 → 1036（88 m / 10 m）、
+ *   19.42 km 处 1424 → 1345（79 m / 10 m）—— 相当于 83°，任何徒步轨迹都不可能出现。
+ *   滑动平均只会把它摊成一个几十米宽的假下降，剖面图上就是一个凭空的坑，
+ *   而「段内最陡 200 m」会直接把这个坑当成最陡坡：19–26 km 段因此从 24° 虚报到 13°。
+ *
+ * 做法：先算逐点高差 d[i]，用邻域中值判断「这一步是不是比别人大得多」，超阈值就换成中值。
+ *   只动离谱的那几步，真实陡坡（≤50°）原样保留。
+ */
+export function despikeArray(a, stepM = 10, maxJumpM = null) {
+  const n = a.length;
+  if (n < 5) return a.slice();
+  const jump = maxJumpM ?? Math.max(8, stepM * 1.5);
+  const d = new Float64Array(n - 1);
+  for (let i = 0; i < n - 1; i++) d[i] = a[i + 1] - a[i];
+  const half = 2;
+  const buf = [];
+  for (let i = 0; i < n - 1; i++) {
+    buf.length = 0;
+    const lo = Math.max(0, i - half);
+    const hi = Math.min(n - 2, i + half);
+    for (let k = lo; k <= hi; k++) buf.push(d[k]);
+    buf.sort((x, y) => x - y);
+    const med = buf[buf.length >> 1];
+    if (Math.abs(d[i] - med) > jump) d[i] = med;
+  }
+  const out = new Array(n);
+  out[0] = a[0];
+  for (let i = 1; i < n; i++) out[i] = out[i - 1] + d[i - 1];
+  return out;
+}
+
 export function smoothArray(a, win) {
   const n = a.length;
   const w = Math.max(1, Math.round(win));

@@ -451,7 +451,7 @@ export const TrailProfile: React.FC<TrailProfileProps> = (props) => {
             </text>
           ) : null}
 
-          {/* 段坡度标注：只标 ≥ 下限的路型段，位置取段中点曲线正上方 */}
+          {/* 段坡度标注：标在段内最陡处（不是段中点），游标靠近时淡出 */}
           {s.profile.slopeMarks?.map((sl: any, i: number) => (
             <text
               key={`sl${i}`}
@@ -461,7 +461,7 @@ export const TrailProfile: React.FC<TrailProfileProps> = (props) => {
               fontSize={sl.fontSize}
               fontWeight={600}
               fill={sl.color}
-              fillOpacity={0.9}
+              fillOpacity={0.9 * (sl.opacity ?? 1)}
               stroke="rgba(0,0,0,0.5)"
               strokeWidth={sl.fontSize * 0.14}
               paintOrder="stroke"
