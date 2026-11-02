@@ -51,6 +51,46 @@ export const EASING_FN = {
  * 对称滤波不产生相位偏移 —— 峰谷位置不会平移，所以「海拔与地理位置一一对应」仍然成立。
  */
 /**
+ * 把「硬台阶」摊成缓坡：**只搬高差，不改总高程**（不会漂移）。
+ *
+ * 用途：画曲线的那份海拔。
+ * ★ 和 despikeArray 的区别（踩过的坑）：
+ *   despikeArray 是把坏的那一步**替换**掉，于是这一步的高差**消失**了 ——
+ *   后面所有点的绝对海拔整体平移。实测少太连穿被平移了 **+406 m**（终点 452 → 858），
+ *   曲线峰顶从 1468 被抬到 1812，纵轴上限 1500 怎么调都框不住。
+ *   这里改成把多出来的高差**均摊到前后各 spread 步**：总高差守恒，峰谷绝对值不变，台阶变成缓坡。
+ */
+export function softenSpikes(a, stepM = 10, maxJumpM = null, spread = 10) {
+  const n = a.length;
+  if (n < 5) return a.slice();
+  const jump = maxJumpM ?? Math.max(8, stepM * 1.5);
+  const d = new Array(n - 1);
+  for (let i = 0; i < n - 1; i++) d[i] = a[i + 1] - a[i];
+  const buf = [];
+  const spikes = [];
+  for (let i = 0; i < n - 1; i++) {
+    buf.length = 0;
+    const lo = Math.max(0, i - 2), hi = Math.min(n - 2, i + 2);
+    for (let k = lo; k <= hi; k++) buf.push(d[k]);
+    buf.sort((x, y) => x - y);
+    const med = buf[buf.length >> 1];
+    if (Math.abs(d[i] - med) > jump) spikes.push({ i, excess: d[i] - med, med });
+  }
+  for (const sp of spikes) {
+    const lo = Math.max(0, sp.i - spread);
+    const hi = Math.min(n - 2, sp.i + spread);
+    // 先把尖峰那一步抹成邻域中值，再把「多出来的高差」均摊回去 —— 两步加起来总和为 0，绝对海拔不漂移
+    d[sp.i] = sp.med;
+    const share = sp.excess / (hi - lo + 1);
+    for (let k = lo; k <= hi; k++) d[k] += share;
+  }
+  const out = new Array(n);
+  out[0] = a[0];
+  for (let i = 1; i < n; i++) out[i] = out[i - 1] + d[i - 1];
+  return out;
+}
+
+/**
  * 差分中值去尖峰（GPS 高程的「台阶」错误）。
  *
  * ★ 为什么平滑救不了它：这类错误不是单点抖动，而是一步跳下去**然后一直停在那儿**。

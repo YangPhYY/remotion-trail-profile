@@ -19,6 +19,7 @@ import {
   sampleAt,
   smoothArray,
   despikeArray,
+  softenSpikes,
   profilePolyline,
   profileY,
   niceBounds,
@@ -72,14 +73,17 @@ const readoutHalfW = (text, fontSize) => {
 };
 
 
-/** 去尖峰后的高程数组：与 deg 无关，按 geo 缓存一次（每帧重建 3181 点的中值滤波纯属浪费） */
-const eleCleanCache = new WeakMap();
-function cleanedEle(geo) {
-  let arr = eleCleanCache.get(geo);
-  if (!arr) {
-    arr = despikeArray(geo.ele, geo.stepM || 10);
-    eleCleanCache.set(geo, arr);
-  }
+/** 两套清洗结果，与帧无关，按 geo 各缓存一次 */
+const eleCurveCache = new WeakMap(); // 摊平版：画曲线 / 读数用（保绝对海拔）
+const eleSlopeCache = new WeakMap(); // 硬替换版：只给坡度用（只取窗口差值，漂移无所谓）
+function curveEle(geo) {
+  let arr = eleCurveCache.get(geo);
+  if (!arr) { arr = softenSpikes(geo.ele, geo.stepM || 10); eleCurveCache.set(geo, arr); }
+  return arr;
+}
+function slopeEle(geo) {
+  let arr = eleSlopeCache.get(geo);
+  if (!arr) { arr = despikeArray(geo.ele, geo.stepM || 10); eleSlopeCache.set(geo, arr); }
   return arr;
 }
 
@@ -803,13 +807,14 @@ export function buildTrailScene(geo, D, props, frame, cfg) {
   const distM = progress * geo.totalM;
   const finished = progress >= 0.9999;
 
-  // 海拔清洗：先去掉 GPS 高程的「台阶」坏点，再做滑动平均。
-  // ★ 顺序不能反：先平滑的话坏点会被摊成一个几十米宽的假坑，剖面图上凭空多出一个陡坡。
-  const eleClean = cleanedEle(geo);
+  // 海拔清洗：先把 GPS 高程的「台阶」摊成缓坡（**保绝对海拔**），再平滑。
+  // ★ 曲线这份绝不能用「替换式」去尖峰：替换会让后续海拔整体漂移（实测 +406 m），
+  //   峰顶被抬到 1812 m，纵轴怎么固定都框不住 —— 那正是「曲线冲出坐标区」的来源。
+  const eleCurve = curveEle(geo);
   // 海拔平滑：对称滑动平均不产生相位偏移，峰谷位置不平移 → 一一对应仍成立
-  const g = smoothWin > 1 ? { ...geo, ele: smoothArray(eleClean, smoothWin) } : { ...geo, ele: eleClean };
-  // 坡度专用的海拔（在「画曲线那份」之上再按米平滑）：只影响坡度数字，不改曲线形状
-  const slopeProf = slopeProfileFor(g, slopeSmoothM);
+  const g = smoothWin > 1 ? { ...geo, ele: smoothArray(eleCurve, smoothWin) } : { ...geo, ele: eleCurve };
+  // 坡度专用的海拔：这里才用「替换式」去尖峰（只取窗口差值，不怕整体漂移）
+  const slopeProf = slopeProfileFor({ ele: slopeEle(geo), stepM: geo.stepM }, slopeSmoothM);
 
   // ---------- ③ 剖面几何（先算 —— 地图区要裁到它的上沿） ----------
   // ★ 两种剖面模式
@@ -830,10 +835,20 @@ export function buildTrailScene(geo, D, props, frame, cfg) {
   const mapH = Math.max(160, showProfile ? plotTop : height);
 
   const bounds = niceBounds(geo.stats.minEle, geo.stats.maxEle, 100);
-  const eleLo = X["下限模式"] === "固定" ? clamp(num(X["固定下限"], 0), 0, 4000) : bounds.lo;
-  const eleHi = X["上限模式"] === "固定"
-    ? Math.max(eleLo + 50, clamp(num(X["固定上限"], 1500), 100, 6000))
-    : Math.max(eleLo + 50, bounds.hi);
+  // ★ 纵轴范围必须把整条曲线包住。
+  //   固定值只允许「往外扩」（比如下限拉到 0 让曲线矮一点），不能往里收：
+  //   收进去曲线就画到图框外面去了 —— 嵩山那条线最高 1733 m，上限却固定 1500，
+  //   峰顶直接冲出坐标区、叠在地图上（用户报的原图就是这样）。
+  const dataLo = geo.stats.minEle;
+  const dataHi = geo.stats.maxEle;
+  const headroom = Math.max(10, (dataHi - dataLo) * 0.02);
+  let lo = X["下限模式"] === "固定" ? clamp(num(X["固定下限"], 0), 0, 4000) : bounds.lo;
+  let hi = X["上限模式"] === "固定" ? clamp(num(X["固定上限"], 1500), 100, 6000) : bounds.hi;
+  if (hi < dataHi) hi = dataHi + headroom;
+  if (lo > dataLo) lo = Math.max(0, dataLo - headroom);
+  if (hi - lo < 50) hi = lo + 50;
+  const eleLo = lo;
+  const eleHi = hi;
 
   // ---------- ④ 相机（地图与剖面共用同一个 distM） ----------
   // ★ 相机与帧无关：全景适配只取决于「画布尺寸 + 占比/位置」，

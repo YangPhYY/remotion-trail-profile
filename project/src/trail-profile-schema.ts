@@ -150,9 +150,9 @@ export const trailProfileSchema = z.object({
   "坐标轴": z.object({
     "显示上下限": z.boolean(),
     "下限模式": z.enum(TRAIL_AXIS_MODES),
-    "固定下限": z.number().step(10).min(0).max(4000),
+    "固定下限": z.number().step(10).min(0).max(4000).describe("纵轴下限（m）。高于线路最低海拔时会被自动压低，不会切掉曲线"),
     "上限模式": z.enum(TRAIL_AXIS_MODES),
-    "固定上限": z.number().step(10).min(100).max(6000),
+    "固定上限": z.number().step(10).min(100).max(6000).describe("纵轴上限（m）。低于线路最高海拔时会被自动撑到最高海拔+留白，不会切掉曲线"),
     "字号": z.number().step(1).min(10).max(72),
     "颜色": zColor(),
     "显示上下基线": z.boolean(),
