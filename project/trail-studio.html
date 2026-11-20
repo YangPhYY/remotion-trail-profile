@@ -212,6 +212,12 @@
       </div>
     </div>
     <div id="bar">
+      <label style="font-size:12px;color:#e8f1f8;display:flex;align-items:center;gap:5px;white-space:nowrap;
+                    padding:3px 7px;border:1px solid #2a3d4e;border-radius:6px;background:#121d27"
+             title="视频画幅比例。切换后预览与出片同步生效（= 参数「画幅 · 比例」）">
+        画幅
+        <select id="sel-aspect" style="background:#0b131d;color:#dfeaF2;border:1px solid #2a3d4e;border-radius:4px;padding:2px 3px;font-size:11.5px"></select>
+      </label>
       <button id="btn-play">▶ 播放</button>
       <button id="btn-home">⏮ 起点</button>
       <input id="seek" type="range" min="0" max="100" step="1" value="0">
@@ -254,6 +260,8 @@ import {
   WP_LABEL_POS,
   ROAD_KEYS,
   ROAD_TYPES,
+  aspectSize,
+  TRAIL_ASPECT_KEYS,
 } from "./src/trail-scene.mjs";
 import { PARAM_GROUPS, clampPropsToSpec } from "./src/trail-params.mjs";
 
@@ -273,7 +281,8 @@ if (location.protocol !== "http:") {
   throw new Error("need http");
 }
 
-const W = 1920, H = 1080, FPS = 30;
+const FPS = 30;
+let W = 1920, H = 1080; // 画幅尺寸：由 PROPS.画幅 驱动，见 applyAspect()
 const $ = (id) => document.getElementById(id);
 
 let GEO, DEFAULTS, PROPS, SAVED, DUR = 1, frame = 0;
@@ -867,7 +876,7 @@ function buildWaypointEditor(box, g, it) {  const el = document.createElement("d
 for (const g of PARAM_GROUPS) {
   const box = document.createElement("details");
   box.className = "grp";
-  box.open = ["地图", "轨迹", "路型", "海拔剖面", "动画节奏"].includes(g.group);
+  box.open = ["画幅", "地图", "轨迹", "路型", "海拔剖面", "动画节奏"].includes(g.group);
   const sum = document.createElement("summary");
   sum.textContent = g.group;
   box.appendChild(sum);
@@ -984,6 +993,20 @@ for (const g of PARAM_GROUPS) {
   });
   controls.push({ group: "轨迹", key: "显示轨迹", primary: cb, set: (v) => { cb.checked = !!v; } });
 }
+// 底栏快捷「画幅」：与参数组「画幅 · 比例」同一个键，双向回填
+{
+  const sel = $("sel-aspect");
+  for (const k of ["自定义", ...TRAIL_ASPECT_KEYS]) {
+    const op = document.createElement("option");
+    op.value = k; op.textContent = k;
+    sel.appendChild(op);
+  }
+  sel.addEventListener("change", () => {
+    PROPS["画幅"]["比例"] = sel.value;
+    onChanged();
+  });
+  controls.push({ group: "画幅", key: "比例", primary: sel, set: (v) => { sel.value = v; } });
+}
 
 /** 把 PROPS 的当前值刷回控件；正被编辑的那个控件跳过（否则打字会被打断） */
 function syncControls() {
@@ -1001,6 +1024,7 @@ function onChanged() {
   DUR = trailDurationInFrames(PROPS, DEFAULTS, FPS);
   if (frame > DUR - 1) frame = DUR - 1;
   $("seek").max = DUR - 1;
+  applyAspect();
   syncControls();
   render();
 }
@@ -1103,7 +1127,7 @@ function syncTrack(m) {
         bands.push(`<g>${casing}${base}${done}</g>`);
       }
       mapTrack.innerHTML =
-        `<g class="rd-bands" transform="translate(${m.gx.toFixed(3)} ${m.gy.toFixed(3)}) scale(${m.k})">${bands.join("")}</g>` +
+        `<g class="rd-bands">${bands.join("")}</g>` +
         `<g class="rd-deco"></g>`;
       roadRefs.bandKey = bandKey;
       roadRefs.done = [...mapTrack.querySelectorAll(".rd-bands g > path:last-child")];
@@ -1151,29 +1175,30 @@ function syncTrack(m) {
   const key = [
     m.showTrack,
     m.gx, m.gy, m.k,
-    m.ghost.color, m.ghost.widthUser, m.ghost.opacity,
-    m.glow.on, m.glow.color, m.glow.widthUser, m.glow.std,
-    m.done.color, m.done.widthUser,
+    m.ghost.color, m.ghost.width, m.ghost.opacity,
+    m.glow.on, m.glow.color, m.glow.width, m.glow.std,
+    m.done.color, m.done.width,
   ].join("|");
   if (key !== trackKey) {
     mapTrack.innerHTML = "";
-    const g = mk("g", { transform: `translate(${m.gx.toFixed(3)} ${m.gy.toFixed(3)}) scale(${m.k})` });
+    // ★ 不再套 translate/scale：路径 d 已是屏幕坐标（见 trail-scene.mjs / trackPathOf）
+    const g = mk("g", {});
     g.appendChild(mk("path", {
       d: m.trackPath, fill: "none", stroke: m.ghost.color, "stroke-opacity": m.ghost.opacity,
-      "stroke-width": m.ghost.widthUser, "stroke-linecap": "round", "stroke-linejoin": "round",
+      "stroke-width": m.ghost.width, "stroke-linecap": "round", "stroke-linejoin": "round",
     }));
     let glow = null;
     if (m.glow.on) {
       glow = mk("path", {
         d: m.trackPath, fill: "none", stroke: m.glow.color, "stroke-opacity": 0.55,
-        "stroke-width": m.glow.widthUser, "stroke-linecap": "round", "stroke-linejoin": "round",
+        "stroke-width": m.glow.width, "stroke-linecap": "round", "stroke-linejoin": "round",
         filter: "url(#m-glow)", pathLength: 1,
       });
       g.appendChild(glow);
     }
     const done = mk("path", {
       d: m.trackPath, fill: "none", stroke: m.done.color,
-      "stroke-width": m.done.widthUser, "stroke-linecap": "round", "stroke-linejoin": "round",
+      "stroke-width": m.done.width, "stroke-linecap": "round", "stroke-linejoin": "round",
       pathLength: 1,
     });
     g.appendChild(done);
@@ -1183,6 +1208,32 @@ function syncTrack(m) {
   }
   if (trackDyn.glow) trackDyn.glow.setAttribute("stroke-dasharray", m.glow.dash);
   trackDyn.done.setAttribute("stroke-dasharray", m.done.dash);
+}
+
+/** 画幅切换：由 PROPS.画幅 重算 W/H，并同步 stage CSS / 两个 svg 的 viewBox。
+ *  ★ 必须清掉所有缓存 key：切画幅后相机 gx/gy/k 与裁剪矩形全变，
+ *    留着旧 key 会让轨迹层/裁剪层的 DOM 不重建（画面停在旧尺寸）。 */
+function applyAspect() {
+  if (!PROPS) return;
+  const f = PROPS["画幅"] ?? {};
+  const { width, height } = aspectSize(f["比例"], f["自定义宽度"], f["自定义高度"]);
+  if (width === W && height === H && $("svg-map").getAttribute("width") === String(width)) return;
+  W = width;
+  H = height;
+  const stage = $("stage");
+  stage.style.width = W + "px";
+  stage.style.height = H + "px";
+  for (const id of ["svg-map", "svg-prof"]) {
+    const svg = $(id);
+    svg.setAttribute("width", W);
+    svg.setAttribute("height", H);
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  }
+  mapDefsKey = "";
+  profDefsKey = "";
+  trackKey = "";
+  roadRefs = { bandKey: "", done: [], deco: null, decoKey: "" };
+  fitStage();
 }
 
 function fitStage() {

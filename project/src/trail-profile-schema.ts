@@ -3,7 +3,7 @@ import { zColor } from "@remotion/zod-types";
 import { EASING_OPTIONS } from "./schema";
 // ★ 形状 / 标签位置的枚举从场景模型 import —— 绝不在 schema 里另写一份。
 //   写两份的后果是「调参台能选到某个形状、渲染却不认」，而且只在出片时才发现。
-import { WP_SHAPES, WP_LABEL_POS } from "./trail-scene.mjs";
+import { WP_SHAPES, WP_LABEL_POS, TRAIL_ASPECT_KEYS } from "./trail-scene.mjs";
 
 // ---------------------------------------------------------------------------
 // TrailProfile（轨迹 + 海拔剖面同步动画）参数 schema
@@ -22,8 +22,15 @@ export const TRAIL_PROFILE_MODES = ["整条显示", "跟随窗口"] as const;
 /** 与 src/trail-scene.mjs 的 WP_SHAPES / WP_LABEL_POS 同源（见文件头 import 注释） */
 const SHAPE_ENUM = WP_SHAPES as unknown as [string, ...string[]];
 const LABEL_POS_ENUM = WP_LABEL_POS as unknown as [string, ...string[]];
+/** 画幅比例枚举与场景模型 / 参数表 / 调参台同源（见文件头 import 注释） */
+const ASPECT_ENUM = ["自定义", ...TRAIL_ASPECT_KEYS] as unknown as [string, ...string[]];
 
 export const trailProfileSchema = z.object({
+  "画幅": z.object({
+    "比例": z.enum(ASPECT_ENUM).describe("视频画幅比例，预览与出片同步生效"),
+    "自定义宽度": z.number().step(2).min(320).max(4096).describe("px。仅当比例为「自定义」时生效"),
+    "自定义高度": z.number().step(2).min(320).max(4096).describe("px。仅当比例为「自定义」时生效"),
+  }),
   // ① 画布与轨迹摆放
   "地图": z.object({
     "轨迹占比": z

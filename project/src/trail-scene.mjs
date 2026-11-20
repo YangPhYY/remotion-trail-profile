@@ -32,6 +32,32 @@ import {
   EASING_FN,
 } from "./trail-geo.mjs";
 
+// ---------------------------------------------------------------------------
+// 画幅预设（唯一真相源）：参数表 select / schema zod / 调参台下拉 / 出片 metadata 共用。
+// 所有主流分辨率的**短边都是 1080**，因此绝对像素布局天然适配，不需要按画幅缩放；
+// 唯一要处理的是窄画布（竖屏 1080 宽）下剖面左右留白之和超过画布 → plotW 被挤到下限。
+// ---------------------------------------------------------------------------
+export const TRAIL_ASPECTS = {
+  "16:9": { w: 1920, h: 1080, label: "16:9 横屏 · B站/YouTube" },
+  "9:16": { w: 1080, h: 1920, label: "9:16 竖屏 · 抖音/视频号" },
+  "1:1": { w: 1080, h: 1080, label: "1:1 方形 · 朋友圈" },
+  "4:5": { w: 1080, h: 1350, label: "4:5 · 小红书图文" },
+  "3:4": { w: 1080, h: 1440, label: "3:4 · 竖版封面" },
+  "4:3": { w: 1440, h: 1080, label: "4:3 · 课件/老屏" },
+  "21:9": { w: 2560, h: 1080, label: "21:9 超宽 · 电影感" },
+  "2.39:1": { w: 2560, h: 1072, label: "2.39:1 · 宽银幕" },
+};
+export const TRAIL_ASPECT_KEYS = Object.keys(TRAIL_ASPECTS);
+
+/** 画幅名 → {width,height}；未知或「自定义」时回落到 defaults 里的宽高 */
+export function aspectSize(name, customW, customH) {
+  if (name === "自定义") {
+    return { width: clamp(Math.round(num(customW, 1080)), 320, 4096), height: clamp(Math.round(num(customH, 1920)), 320, 4096) };
+  }
+  const a = TRAIL_ASPECTS[name] ?? TRAIL_ASPECTS["16:9"];
+  return { width: a.w, height: a.h };
+}
+
 const safeColor = (c, fallback) =>
   typeof c === "string" && /^(#[0-9a-fA-F]{3,8}|rgba?\(.+\)|hsla?\(.+\))$/.test(c) ? c : fallback;
 
@@ -87,13 +113,26 @@ function slopeEle(geo) {
   return arr;
 }
 
-/** 轨迹墨卡托路径串（只与几何有关，缓存一次 —— 每帧重建 3100 点的串纯属浪费） */
+/**
+ * 轨迹路径串 —— ★ 输出**屏幕坐标**，不输出墨卡托。
+ *
+ * 为什么（血坑，2026-11-16 实测）：墨卡托绝对坐标 0.8147 × k 5.24e7 ≈ 4.27e7，
+ * 超过 Chromium SVG transform 的 float32 平移上限 ±2^25（33,554,432），
+ * 会被**静默硬截断**成 -33554430 → 整条路径被推到屏幕外 487 万 px。
+ * 症状：头部点（走 toScreen 单独算）正常、轨迹线整条消失，且只在「轨迹占比大 → k 大」
+ * 时出现（本机 2.7 km 小环线关闭剖面后必现，31 km 长轨迹 k 小则不出现）。
+ * 屏幕坐标量级只有 1e3，彻底离开这个危险区；线宽也随之改成像素值，渲染方不再需要 scale 组。
+ *
+ * 缓存按「几何 + 相机」两元组：平面全景下 gx/gy/k 逐帧恒定，命中率 100%。
+ */
 let trackPathCache = null;
-function trackPathOf(geo) {
-  if (trackPathCache && trackPathCache.geo === geo) return trackPathCache.d;
+function trackPathOf(geo, gx, gy, k) {
+  const key = `${gx.toFixed(2)}|${gy.toFixed(2)}|${k.toFixed(2)}`;
+  if (trackPathCache && trackPathCache.geo === geo && trackPathCache.key === key) return trackPathCache.d;
   let d = "";
-  for (let i = 0; i < geo.mx.length; i++) d += `${i ? "L" : "M"}${geo.mx[i].toFixed(9)} ${geo.my[i].toFixed(9)}`;
-  trackPathCache = { geo, d };
+  for (let i = 0; i < geo.mx.length; i++)
+    d += `${i ? "L" : "M"}${(gx + geo.mx[i] * k).toFixed(2)} ${(gy + geo.my[i] * k).toFixed(2)}`;
+  trackPathCache = { geo, key, d };
   return d;
 }
 
@@ -135,19 +174,22 @@ const pseudo = (i, salt) => {
  * 等距重采样下下标 i ↔ i×stepM，所以端点插值即可，中间顶点直接取。
  */
 const sliceCache = new Map();
-function pathSlice(geo, m0, m1) {
-  const key = `${m0.toFixed(2)}|${m1.toFixed(2)}`;
+function pathSlice(geo, m0, m1, gx, gy, k) {
+  const key = `${m0.toFixed(2)}|${m1.toFixed(2)}|${gx.toFixed(2)}|${gy.toFixed(2)}|${k.toFixed(2)}`;
   const hit = sliceCache.get(key);
   if (hit && hit.geo === geo) return hit.d;
   const a = sampleAt(geo, m0);
   const b = sampleAt(geo, m1);
-  let d = `M${a.x.toFixed(9)} ${a.y.toFixed(9)}`;
+  // ★ 与 trackPathOf 同理：输出屏幕坐标（墨卡托 ×k 会超 float32 平移上限被截断）
+  const sx = (x) => (gx + x * k).toFixed(2);
+  const sy = (y) => (gy + y * k).toFixed(2);
+  let d = `M${sx(a.x)} ${sy(a.y)}`;
   const i0 = Math.ceil(m0 / geo.stepM);
   const i1 = Math.floor(m1 / geo.stepM);
   for (let i = Math.max(1, i0); i <= i1 && i < geo.mx.length; i++) {
-    d += `L${geo.mx[i].toFixed(9)} ${geo.my[i].toFixed(9)}`;
+    d += `L${sx(geo.mx[i])} ${sy(geo.my[i])}`;
   }
-  d += `L${b.x.toFixed(9)} ${b.y.toFixed(9)}`;
+  d += `L${sx(b.x)} ${sy(b.y)}`;
   if (sliceCache.size > 400) sliceCache.clear();
   sliceCache.set(key, { geo, d });
   return d;
@@ -823,8 +865,12 @@ export function buildTrailScene(geo, D, props, frame, cfg) {
   //                     配合平面全景 = 一页看完所有动画，不用等镜头、也不用拖时间轴。
   //   跟随窗口：曲线 x = 游标 x +（d − distM）×ppm（经典 HUD，窗口跟着游标滑动）。
   const wholeProfile = profMode === "整条显示";
-  const plotLeft = padLeft;
-  const plotW = Math.max(60, width - padLeft - padRight);
+  // ★ 窄画布（竖屏 1080 宽）下原留白 600+600=1200 会把绘图区挤到 0。
+  //   等比压缩左右留白，保证 plotW 至少占画布 55%；横屏 1920 下原值不受影响。
+  const padMax = Math.max(0, Math.floor(width * 0.225));
+  const plotLeft = Math.min(padLeft, padMax);
+  const plotRightPad = Math.min(padRight, padMax);
+  const plotW = Math.max(60, width - plotLeft - plotRightPad);
   const plotBottom = height - profBottomGap;
   const plotTop = plotBottom - profH;
   // 整条模式下 ppm 恒为 plotW/totalM，游标 x = plotLeft + distM×ppm；
@@ -1023,9 +1069,10 @@ export function buildTrailScene(geo, D, props, frame, cfg) {
           plain,
           startM: sg.s,
           endM: sg.e,
-          d: pathSlice(geo, sg.s, sg.e),
-          bandW: bandPx * invK,
-          casingW: (bandPx + 3) * invK,
+          d: pathSlice(geo, sg.s, sg.e, gxMap, gyMap, k),
+          // 线宽一律用**像素**（渲染方已不用 scale 组，见 trackPathOf 注释）
+          bandW: bandPx,
+          casingW: bandPx + 3,
           casing: plain ? null : tint(def.casing),
           base: plain ? pathColor : tint(def.base),
           done: plain ? doneColor : tint(def.done),
@@ -1039,7 +1086,7 @@ export function buildTrailScene(geo, D, props, frame, cfg) {
           badge,
         };
       });
-      road = { segments: segs, bandPx: bandBase * invK, total: cuts.length };
+      road = { segments: segs, bandPx: bandBase, total: cuts.length };
     }
   }
 
@@ -1213,19 +1260,20 @@ export function buildTrailScene(geo, D, props, frame, cfg) {
       gx: gxMap,
       gy: gyMap,
       k,
-      trackPath: trackPathOf(geo),
+      trackPath: trackPathOf(geo, gxMap, gyMap, k),
       // 路型分段：null = 未启用（渲染方走 trackPath 单线）。有值时按段绘制路面带，
       // 每段自带 d / 包边 / 底色 / 已走色 / 段内进度 p / 材质图元 / 徽标。
       road,
-      ghost: { color: pathColor, opacity: ghostOpacity, widthUser: trackW * invK },
+      // ★ 线宽全部是**像素**：路径已输出屏幕坐标，渲染方不再套 scale(k) 组。
+      ghost: { color: pathColor, opacity: ghostOpacity, width: trackW },
       glow: {
         on: T["显示光晕"] !== false,
         color: doneColor,
-        widthUser: trackW * glowMul * invK,
-        std: Math.max(0.4, (trackW * glowMul * 0.32) / k),
+        width: trackW * glowMul,
+        std: Math.max(0.4, trackW * glowMul * 0.32),
         dash: `${drawnFrac > 0 ? drawnFrac : 0.00001} 1`,
       },
-      done: { color: doneColor, widthUser: trackW * invK, dash: `${drawnFrac > 0 ? drawnFrac : 0.00001} 1` },
+      done: { color: doneColor, width: trackW, dash: `${drawnFrac > 0 ? drawnFrac : 0.00001} 1` },
       marks: {
         // ★ 每个点自带「图元数组 + 标签对象」，几何全部在 buildMark/markShapes 里算好：
         //   渲染方只做 translate + 按 t 建元素，不做任何形状/标签位置推导。

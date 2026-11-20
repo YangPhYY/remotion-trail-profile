@@ -12,9 +12,18 @@
 
 // 形状 / 标签位置的枚举列表**从场景模型 import**：
 // 渲染方与参数表各写一份必然分叉（调参台能选到、渲染却不认）。这里只做转发。
-import { WP_SHAPES, WP_LABEL_POS } from "./trail-scene.mjs";
+import { WP_SHAPES, WP_LABEL_POS, TRAIL_ASPECT_KEYS } from "./trail-scene.mjs";
 
 export const PARAM_GROUPS = [
+  {
+    group: "画幅",
+    hint: "视频比例。切换后预览与出片同步生效（短边均为 1080，绝对像素布局无需缩放）；选「自定义」可手填宽高",
+    items: [
+      { key: "比例", type: "select", options: ["自定义", ...TRAIL_ASPECT_KEYS], label: "视频比例" },
+      { key: "自定义宽度", type: "range", min: 320, max: 4096, step: 2, unit: "px" },
+      { key: "自定义高度", type: "range", min: 320, max: 4096, step: 2, unit: "px" },
+    ],
+  },
   {
     group: "地图",
     hint: "平面全景：整条轨迹一屏展示，无镜头跟随。占比按「整条完整可见」计算，轨迹比画面更扁时横向占比会小于设定值",

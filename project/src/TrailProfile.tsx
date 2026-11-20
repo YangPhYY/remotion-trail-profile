@@ -4,7 +4,7 @@ import type { CalculateMetadataFunction } from "remotion";
 import trailData from "./trail-profile-data.json";
 import trailDefaults from "./trail-profile-defaults.json";
 import { makeGeo } from "./trail-geo.mjs";
-import { buildTrailScene, trailDurationInFrames } from "./trail-scene.mjs";
+import { buildTrailScene, trailDurationInFrames, aspectSize } from "./trail-scene.mjs";
 import type { TrailProfileProps } from "./trail-profile-schema";
 
 // ---------------------------------------------------------------------------
@@ -35,9 +35,16 @@ const GEO = makeGeo(trailData as unknown as Parameters<typeof makeGeo>[0]);
 const DEFAULTS = trailDefaults as unknown as Record<string, Record<string, number>>;
 
 /** 时长 = 走完时长 + 结尾定格；Studio 改「时长秒」时时间轴实时联动 */
-export const trailCalculateMetadata: CalculateMetadataFunction<TrailProfileProps> = ({ props }) => ({
-  durationInFrames: trailDurationInFrames(props, DEFAULTS, TRAIL_FPS),
-});
+export const trailCalculateMetadata: CalculateMetadataFunction<TrailProfileProps> = ({ props }) => {
+  const frame = props?.画幅 ?? (DEFAULTS as any)?.画幅;
+  const { width, height } = aspectSize(frame?.比例, frame?.自定义宽度, frame?.自定义高度);
+  return {
+    durationInFrames: trailDurationInFrames(props, DEFAULTS, TRAIL_FPS),
+    width,
+    height,
+    fps: TRAIL_FPS,
+  };
+};
 
 /**
  * 标记图元 → SVG 元素。
@@ -137,16 +144,15 @@ export const TrailProfile: React.FC<TrailProfileProps> = (props) => {
             </>
           ) : null}
 
-          {/* 轨迹：整组吃一个 transform，相机移动不再逐帧重算 3100 个点。
-              ★ 「轨迹 · 显示轨迹」= 总开关：关掉后这一组连同头部点/起终点/标注
-                全部不渲染（后三者在场景模型里已按同一开关置空）。 */}
+          {/* 轨迹 ★ 不再套 transform 组：路径 d 已是屏幕坐标（场景模型里算好）。
+              原因见 trail-scene.mjs / trackPathOf 注释 —— 墨卡托 ×k 会超 float32
+              平移上限被 Chromium 截断，小环线大占比时整条轨迹消失。 */}
           {m.showTrack ? (
-            <g transform={`translate(${m.gx.toFixed(3)} ${m.gy.toFixed(3)}) scale(${m.k})`}>
+            <g>
               {m.road ? (
                 // ★ 路型模式：按里程分段画「路面带」。
                 //   每段 = 包边（深色，模拟厚度）→ 未走底色（压暗）→ 已走底色（亮，dash 裁剪）。
-                //   材质图元与徽标**不在这里**：它们是屏幕坐标（见下方独立一层），
-                //   因为 scale(k) 下 1.8px 会变成 8e-8，踩到浮点精度下限直接画不出来。
+                //   材质图元与徽标同样是屏幕坐标（见下方独立一层），两者严格同位。
                 m.road.segments.map((seg: any) => (
                   <g key={seg.key}>
                     {seg.casing ? (
@@ -190,7 +196,7 @@ export const TrailProfile: React.FC<TrailProfileProps> = (props) => {
                     fill="none"
                     stroke={m.ghost.color}
                     strokeOpacity={m.ghost.opacity}
-                    strokeWidth={m.ghost.widthUser}
+                    strokeWidth={m.ghost.width}
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   />
@@ -200,7 +206,7 @@ export const TrailProfile: React.FC<TrailProfileProps> = (props) => {
                       fill="none"
                       stroke={m.glow.color}
                       strokeOpacity={0.55}
-                      strokeWidth={m.glow.widthUser}
+                      strokeWidth={m.glow.width}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       filter="url(#tp-glow)"
@@ -213,7 +219,7 @@ export const TrailProfile: React.FC<TrailProfileProps> = (props) => {
                     d={m.trackPath}
                     fill="none"
                     stroke={m.done.color}
-                    strokeWidth={m.done.widthUser}
+                    strokeWidth={m.done.width}
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     pathLength={1}

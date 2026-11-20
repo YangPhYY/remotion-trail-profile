@@ -68,6 +68,29 @@ cam = panCameraPx(geo, cam, dx, dy);   // 内部重新 makeCamera
 **局部绘制按墨卡托弧长归一**，不是里程：纬度差会让两者差 ~0.04%（31 km 上 ≈14 px）。
 用 `mercLengthFractions()` + `pathLength=1` + `strokeDasharray="frac 1"`。
 
+### ★ 轨迹路径必须输出「屏幕坐标」，不能输出墨卡托绝对坐标（2026-11-16 血坑）
+
+墨卡托归一化坐标 × `k` 就是屏幕位移，但**平移分量会先被浏览器截断**：
+
+```
+k = 5.24e7（2.7 km 小环线、占比 0.86、1080p 全高）
+gx ≈ -0.81478 × 5.24e7 ≈ -4.27e7
+Chromium SVG transform 的 float32 平移上限 = ±2^25 = 33,554,432
+→ 实测 getCTM().e = -33,554,430（被硬截断），整条路径被推到屏幕外 487 万 px
+```
+
+**症状**：头部点/起点/标注（走 `cam.toScreen` 单独算）正常，**轨迹线整条消失**，画布上只剩一个小圆点。
+极易误判成「显示开关坏了」——用户原话就是「海拔图和轨迹图无法单独显示某一个」，
+真相是「关掉剖面 → mapH 变大 → k 变大 → 超阈值」才消失，开着剖面时 k 略小又能看见。
+
+**判据**：`0.8147 × k > 3.3e7`（即 k > 4.1e7）就会踩。长轨迹（31 km，k≈2e6）不会，**短轨迹 + 大占比必踩**。
+**验法**：`document.querySelector('#map-track path').getBoundingClientRect().x` 应该是几百，不是百万级。
+
+**改法**：`trackPathOf(geo, gx, gy, k)` / `pathSlice(...)` 直接吐 `gx + x*k`（`toFixed(2)`），
+渲染方**去掉整个 `<g transform="translate() scale(k)">`**，线宽/光晕 `stdDeviation` 全部改成像素值。
+缓存 key 要带上 `gx|gy|k`（平面全景下逐帧恒定，命中率 100%）。
+连带好处：材质图元、徽标、路径、线宽第一次全部统一在屏幕坐标系，不再有 `invK` 换算。
+
 ## 3. 剖面「整条显示」：曲线静止、游标移动
 
 令 `ppm = plotW / totalM`、`cursorX = plotLeft + distM*ppm`，再把 `windowM = totalM` 传给
@@ -197,8 +220,7 @@ export function markShapes(shape, s, color) {
 
 ## 6. 客观核对（不要靠肉眼）
 
-`scripts/check-trail-align.mjs` 的断言清单（每帧抽样，缺一条都会出「看着对其实错」的片子）。
-> 本仓库未附带这个脚本；下面是它该断言的内容，按此自行实现即可（30 行左右的纯函数校验）。
+`scripts/check-trail-align.mjs` 的断言清单（每帧抽样，缺一条都会出「看着对其实错」的片子）：
 
 1. 读数同源：游标数字 == 右上 HUD == 同里程平滑海拔
 2. 游标落在曲线上（折线在 `cursorX` 处插值 == `cursor.dotY`）
@@ -224,10 +246,22 @@ export function markShapes(shape, s, color) {
 只比「离哪个样本顶点最近」时，10 m 步长下最大偏 5 m（实测新轨迹上 4.478 m），
 既让拖动吸附不跟手，也让上面的往返断言假红。逐线段投影后误差 < 0.01 m。
 
-调参台交互用 CDP 实拍核对（可选工具，本仓库未附带）：
-`node scripts/cdp-shot.mjs --url=... --wait="条件" --seq='[{"expr":"...","out":"out/x.png"}]'`。
+调参台交互用 CDP 实拍核对：`node scripts/cdp-shot.mjs --url=... --wait="条件" --seq='[{"expr":"...","out":"out/x.png"}]'`。
 顺带把「点击加点确实落在指定 km」「拖动 8 km→20 km」「展开明细行」「改样式确实写进 JSON 且渲染生效」
 「跟随默认确实清掉了覆盖键」都各断言一次 —— 这五件事肉眼在截图上看不出来。
+
+**★ 数学断言全绿 ≠ 画面正确，必须补一条「浏览器里元素真的在画面内」的断言**：
+`getBoundingClientRect()` 的 x/y 应为几百，不能是百万级（float32 平移截断，见 §2）。
+且「显示轨迹 / 显示海拔图」两个开关是**完全独立**的，四种组合（开开 / 开关 / 关开 / 关关）都要各拍一张：
+关闭剖面会让 mapH 变大 → k 变大，**只有这个组合才暴露该 bug**，开剖面时反而正常。
+
+**生长终点也能直接验**（比看截图可靠）：
+```js
+const p = document.querySelector('#map-track g > path:last-child');
+const end = p.getPointAtLength(p.getTotalLength() * parseFloat(scene.map.done.dash));
+// end 必须 ≈ scene.map.head 的位置（实测 0.03 px）；p.getPointAtLength(0) 必须 ≈ scene.map.start（0 px）
+```
+这条同时钉住「dash 比例」「路径坐标」「头部点坐标」三者同源，比肉眼看「白线到哪结束」可靠得多。
 
 ### 形状系统必须渲一版「对照图」
 
@@ -322,7 +356,7 @@ export function markShapes(shape, s, color) {
 | `坡度标注下限` | 8° | 低于这个角度不标 |
 | `坡度窗口米` | 200 | 取多长一段的高差：200 m ≈ 一个陡坡坡段 |
 | `坡度平滑米` | 90 | 先按米平滑压 GPS 高程噪声；0 = 不平滑，数字会乱跳 |
-| `坡度单位` | 度 | 可选「百分比」（tan×100，户外 App 常用口径；29° = 55%） |
+| `坡度单位` | **百分比**（2026-11-20 改） | 与户外 App / 两步路口径一致；公式 `tan(度)×100`。原默认「度」曾致用户误判「算低了」：界面显示 22° 其实=40%，App 显示 40% 是同一个坡。已改默认百分比，别改回「度」。 |
 | `坡度标注字号/上移/颜色` | 16 / 26 / 白 | 上移可负，负数压到曲线上 |
 
 游标侧：`坡度读数` + `坡度读数窗口米`(300) / 字号 / 上移 / 颜色。
@@ -337,6 +371,14 @@ export function markShapes(shape, s, color) {
 3. **必须先平滑再算**。10 m 步长下 GPS 高程二阶差分中位数 0.7 m、p99 16 m，
    直接拿相邻点算就是 ±4° 起步的假坡度。实测同一段：原样 29.6° / 平滑 90 m 27.0° / 平滑 250 m 19.5°。
    默认 90 m 是「压得住噪声、又不会把陡坡抹平」的折中。
+
+   ★ **平滑不会大幅削峰，别拿它当「坡度算低了」的借口**：实测一条 6 km 轨迹，
+   原始 200 m 窗口最大 30.5°，despike+平滑90 m+200 m 后 29.09° —— **只削 1.4°**。
+   真正把瞬时噪声（原始 10 m 窗口 64°=208%）压成真实坡度的是「窗口从 10 m 放大到 200 m」，
+   这是正确做法。用户说「App 上 40%+、你才 20 多」时，**几乎一定是单位口径**：
+   20 多度 × tan = 40%+ 百分比，是同一个坡。先把 `坡度单位` 确认为「百分比」再谈别的（已改为默认）。
+   诊断脚本套路见 `out/diag-slope.mjs`：同一轨迹按 10/20/50/100/200 m 窗口 + 各平滑口径横排对比，
+   数学断言不能省，但最先要看的是单位。
 4. **高程「台阶」坏点要分两套处理，混用会毁掉绝对海拔**。GPS 高程会一步跳几十米然后**停在那儿**，
    滑动平均救不了（只会摊成几十米宽的假坑），而「段内最陡窗口」会把假坑当成最陡坡。
    实测少太连穿两处：4.50 km（1124→1036，88 m/10 m）、19.42 km（1424→1345，79 m/10 m）。
@@ -362,13 +404,33 @@ export function markShapes(shape, s, color) {
 **换轨迹必清 `路型分段`**：分段按名字或里程写死，换轨后名字一律匹配不到 → 整层静默失效
 （`road=null`，悄悄退回单色线，不报错）。设计文档见 `docs/路型样式-需求与提示词.md`。
 
-## 8. 推荐默认设定（起点，不是硬性规定）
+## 7.6 视频画幅（2026-11-20 加）
 
-目标形态：「一条轨迹 → 一眼能看懂 → 直接进剪映叠」，不是技术演示。
-下表是长期使用后沉淀的推荐值；要换风格就整表覆盖，不必逐项解释。
+- **唯一真相源**：`src/trail-scene.mjs` 的 `TRAIL_ASPECTS` / `TRAIL_ASPECT_KEYS` / `aspectSize()`。
+  `trail-params.mjs` 的 select options、`trail-profile-schema.ts` 的 zod enum、调参台底栏下拉、
+  `TrailProfile.tsx` 的 `calculateMetadata` 全部 import 它，**新增比例只改一处**。
+- **不需要按画幅缩放绝对像素**：所有预设短边都是 1080（横屏宽 1920、竖屏高 1920），
+  字号/留白/线宽等绝对像素在两种画幅里观感一致。唯一特例是**窄画布左右留白溢出**：
+  1080 宽下原 600+600=1200 会把剖面挤没 → `trail-scene.mjs` plotW 处按 `width*0.225` 钳制各边。
+- **出片联动**：`trailCalculateMetadata` 按 `props.画幅` 返回 width/height/fps，
+  Remotion composition 的静态 `width={1920}` 会被覆盖（Remotion 4 支持），Studio 侧栏也跟着变。
+  验证：`remotion compositions ... --props=out/props-9x16.json` 应显示 `TrailProfile 1080x1920`。
+- **调参台联动**：`applyAspect()` 由 `onChanged()` 触发，改 stage CSS + 两个 svg 的 width/height/viewBox，
+  并**清空所有渲染缓存 key**（mapDefsKey / trackKey / roadRefs），否则画面停在旧画幅。
+  坐标系换算（stagePoint / stageScale）都引用 `W` 变量，W 改 let 后自动跟随。
+- **改参数表必须重启调参台服务**（长驻进程只在启动时读 PARAM_GROUPS），
+  否则面板能看到新键、保存时被旧表抹掉。
+- **已知观感**：竖屏中段上下留白偏大（默认 `轨迹位置Y=0.34` + `离底距离=480` 在 1920 高下放大），
+  属默认参数问题非画幅 bug；用户可在调参台调这两个值，别在画幅切换里偷偷改用户参数。
+
+## 8. 我的默认设定（优先级高于上文所有通用默认值）
+
+用户要的是「一条轨迹 → 一眼能看懂 → 直接进剪映叠」的片子，不是技术演示。
+**每次开做先按这张表走，不要在群里再问一遍。**
 
 | 设定项 | 取值 | 为什么 |
 |---|---|---|
+| `画幅.比例` | 16:9（可切换 9:16 / 1:1 等 8 种） | 2026-11-20 加。短边均 1080，绝对像素布局天然适配；预设表在 `trail-scene.mjs` 的 `TRAIL_ASPECTS`，参数表/schema/调参台下拉/出片 metadata 全从它派生，别另写一份 |
 | `地图.透明背景` | **true** | 成品要叠在剪映真实画面上，alpha=0 是刚需 |
 | `轨迹.显示光晕` | **false**（已写进 defaults，不必每次传 props） | 深底上肉眼几乎看不出，却吃掉 2/3 渲染时间 |
 | `路型.路型带宽倍数` | 2（=12px） | 细线审美与可读性的折中；3~4× 才能看清碎石，但画面会变"粗管子" |
@@ -376,7 +438,7 @@ export function markShapes(shape, s, color) {
 | `海拔剖面.剖面模式` | 整条显示 | 一屏看完，不要跟随窗口 |
 | 相机 | 平面全景（无跟随/滑动） | 地图不滑，只有轨迹长 + 游标扫 |
 | `动画节奏.时长秒` | 45 | 40~46 s 之间可接受 |
-| `文字标题.主标题` | 「<你的署名>」+ 轨迹名 | ⚠ 换轨迹后**必须**改，否则还挂着上一条的名字 |
+| `文字标题.主标题` | 「旺仔徒步录」+ 轨迹名 | ⚠ 换轨迹后**必须**改，否则还挂着上一条的名字 |
 | 首次交付形态 | **调参台**（不渲染） | 见 §8.5：先调后渲，否则白渲一遍 |
 
 **交付标准（缺一条不算完成）**
@@ -392,9 +454,9 @@ export function markShapes(shape, s, color) {
 **规则（按顺序判断）**
 1. 收到 KML → 解析数据 → **清掉上一条轨迹遗留的引用** → 打开调参台 → **停在这里**。
    - 「自定义途经点」里按名字/里程写死的点、「路型分段」里按名字引用的区间，换轨迹后**一律匹配不到**。
-     前者会画到山外，后者会让路型整层静默失效（回到单色线）。所以换轨必清。
+     前者会画到山外，后者会让路型整层静默失效（road=null，回到单色线）。所以换轨必清。
    - 旧数据先备份成 `*.bak-<旧轨迹名>`，别覆盖掉。
-2. 收尾时必须**明确问一次**「要不要现在直接渲染导出？」（有选项组件就用选项，没有就问一句话）。
+2. 收尾时必须**明确问一次**「要不要现在直接渲染导出？」（有 AskUserQuestion 就用选项，没有就问一句话）。
 3. **例外**：用户话里已经带「渲染 / 出片 / 导出 / 视频 / mp4 / 发我」这类明确动词 → 直接渲染，不必再问。
 4. 真要渲染时，先按 §8 那张表过一遍参数（透明背景、标题改成本条轨迹名）。光晕已在默认值里关掉
    （`轨迹.显示光晕 = false`），**不要手动打开** —— 它不是审美选项，是渲染时间的三分之二。
@@ -405,45 +467,51 @@ export function markShapes(shape, s, color) {
 ## 9. 标准作业顺序（SOP，一条 KML 从零到片）
 
 ```bash
-# ① 解析 KML → 等里程重采样（唯一真相源，输出 src/trail-profile-data.json）
-node scripts/build-trail-profile.mjs "<kml 路径>" --step=10
-# 输出确认：点数 / 里程 / 海拔区间 / 爬升 / 坐标系判定（WGS-84 自动转 GCJ-02）
-# 没有高德 key、或坐标是虚构示例时，加 --no-verify 跳过坐标系校验
+# ① 备份旧数据（数据文件是按轨迹生成的，换轨迹就覆盖）
+cp src/trail-profile-data.json src/trail-profile-data.json.bak-<旧轨迹名>
 
-# ② 调参台微调（只需 Node，不用 npm install）
-node scripts/trail-studio-server.mjs        # http://localhost:5232/trail-studio.html
-# 改完点「保存到文件」，写回 src/trail-profile-defaults.json
+# ② 解析 KML → 等里程重采样（唯一真相源）
+node scripts/build-trail-profile.mjs "<kml 绝对路径>" --step=10
+# 看输出确认：点数 / 里程 / 海拔区间 / 爬升 / 坐标系判定（WGS-84 会自动转 GCJ-02）
 
 # ③ 生成完整 props（⚠ CLI --props 是浅合并，**必须传完整 defaults**，只传子组会把整组替换掉）
 node -e "const fs=require('fs');const d=JSON.parse(fs.readFileSync('src/trail-profile-defaults.json','utf8'));
 d.文字标题.主标题='<轨迹名>';d.轨迹.显示光晕=false;d.地图.透明背景=true;
 fs.writeFileSync('out/trail-props-alpha.json',JSON.stringify(d,null,2));"
 
-# ④ 抽首/中/尾 3 帧实看（必做，别跳）
+# ④ 渲 3 帧实看（必做，别跳）
 for f in 60 700 1340; do ./node_modules/.bin/remotion still src/index.tsx TrailProfile \
-  "out/check-$f.png" --frame=$f --props=out/trail-props-alpha.json; done
+  "out/check-$f.png" --frame=$f --props=out/trail-props-alpha.json --public-dir=.public-trail \
+  --browser-executable "<浏览器路径见 §10>"; done
 
-# ⑤ 出片（透明 ProRes 4444，剪映/PR 通用，体积大）
-npm run render-trail-alpha
+# ⑤ 调参台微调（改完点「保存到文件」写回 defaults，Studio 刷新即同步）
+node scripts/trail-studio-server.mjs        # http://localhost:5232/trail-studio.html
+
+# ⑥ 出片（透明）
+npm run render-trail-alpha        # ProRes 4444 .mov，剪映/PR 通用，体积大
+npm run render-trail-alpha-webm   # VP9 .webm，体积小
+
+# ⑦ 验 alpha（四角）
+node -e "import('./scripts/lib/png-decode.mjs').then(m=>{const {w,h,chan,data}=m.decodePNG('out/trail-alpha-check.png');
+console.log('左上',[...data.slice(0,4)].join(','));console.log('右下',[...data.slice((((h-3)*w+w-3)*chan),(((h-3)*w+w-3)*chan)+4)].join(','));})"
 ```
 
-判定「轨迹与剖面是否严格同步」不要靠肉眼，走 §6 的客观核对。
+## 10. 本机工程现状（2026-10-23 核实；环境会变，动手前先 `ls` 验一遍）
 
-## 10. 环境准备与已知坑（核实日期 2026-10；环境会变，动手前先 `ls` 验一遍）
-
-- **浏览器**：Remotion 需要 Chromium。自带 `chrome-headless-shell` 缺失时（升级/清理后很常见），
-  显式指定系统浏览器 `--browser-executable "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"`，
-  或先跑 `npx remotion browser ensure` 重新下载。两条路都实测可用。
-- **底图默认关闭**：`地图.显示底图=false` 时出片**不需要任何瓦片**，`public/` 空着就能渲。
-  要开底图得自备瓦片放 `public/trail-tiles/`（不入库，见下方合规说明）。
-- **本仓库只注册一个合成** `TrailProfile`：`remotion compositions` 只应输出一行；
-  输出空列表就说明 bundle 出错（看报错，不要怀疑组件丢了）。
-- **端口**：调参台默认 5232；Studio 的 3000 被占时用 `--port=3100`。
-- **Studio 根路径会恢复「上次打开的合成」**：分享链接必须带合成名
-  `http://localhost:3100/TrailProfile`，否则可能落到素材缺失的合成上、满屏红色报错。
-- **调参台预览底板**跟随场景 `bgColor`：透明时铺 28px 棋盘格 —— 不铺就看不出透明是否生效。
-- 调 Remotion CLI 用 `./node_modules/.bin/remotion`，不要用 `node node_modules/@remotion/cli/dist/index.js`
-  （某些环境会静默失败：exit=0、无输出、无文件，最容易误判成功）。
+- **浏览器**：`.chrome/extracted/.../chrome-headless-shell.exe` **已被删除**。唯一可用 =
+  `--browser-executable "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"`（系统 Edge，实测 still/render/compositions 都正常）。
+- **`public/` 已被清空**（仅 4 KB）。TrailProfile 因「显示底图=false」**不需要任何素材**；
+  `mkdir -p .public-trail` 建空目录即可渲染（不要 chain `npm run sync-trail-public`，它会因缺
+  `public/trail-tiles` 直接 EXIT=1 把整条命令链掐断）。
+- **`src/Root.tsx` 是分组结构**：函数体最前是「当前在用」= `TrailProfile`；
+  18 个历史合成收在 `{SHOW_COMPOSITIONS ? … : null}` 里，默认 `false`（侧栏只显示一个）。
+  改这个开关会同时影响 Studio 侧栏和 CLI —— **开关为 false 时 CLI 会报「Available compositions:」空列表**，
+  很容易误判成组件丢了。
+- **端口**：Studio `--port=3100`（3000 被占）；调参台 5232。
+- **Studio 打开根路径会恢复「上次的合成」**，给用户的链接必须带合成路径：`http://localhost:3100/TrailProfile`。
+- **调参台预览底板**跟随 `s.bgColor`（已修）：透明时铺 28px 棋盘格，否则看不出透明是否生效。
+- 调 Remotion CLI 一律走 `./node_modules/.bin/remotion`（用 `node .../@remotion/cli/dist/index.js`
+  会被沙箱 WMIC 黑名单拦死，**exit=0、无输出、无文件**，最易误判成功）。
 
 ## 11. 怎么继续维护这个 skill
 
@@ -454,9 +522,6 @@ npm run render-trail-alpha
 - 改完 self-check：`grep -n "^## " SKILL.md` 看章节结构是否还清爽；超过 400 行就该拆分。
 
 ## 12. 卫星截图叠加（SatelliteTrack）
-
-> 本节只保留**做法与坑**，本仓库不含该合成的实现（`SatelliteTrack.tsx` / `sat-track-scene.mjs`
-> / `check-sat-track.mjs` 都不在包内）。需要时按下面的规则自行实现，别从零试错。
 
 用户给一张卫星截图 + 图上控制点经纬度，要求把轨迹叠上去 —— 另一套合成
 （`src/SatelliteTrack.tsx` + `src/sat-track-scene.mjs` + `src/satellite-track-data.json`），
